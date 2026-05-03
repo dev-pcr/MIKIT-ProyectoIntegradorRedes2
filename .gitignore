@@ -1,0 +1,37 @@
+# Node
+node_modules/
+dist/
+dist-native/
+build/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env
+
+# Desktop App Build Artifacts
+MIKIT-Desktop.exe
+MIKIT-Desktop.spec
+installer/
+ffmpeg/
+legacy_backup/
+
+# IDEs
+.vscode/
+.idea/
+.cursor/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Agent state
+.agents/SKILL/
+.agents/skills/
+.agents/rules/
+skills-lock.json
