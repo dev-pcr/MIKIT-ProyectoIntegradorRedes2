@@ -27,9 +27,9 @@ def process_and_split(input_path, temp_dir):
     if total_len <= max_ms:
         path = os.path.join(temp_dir, "chunk_0.mp3")
         audio.export(path, format="mp3", bitrate="64k")
-        return [path]
+        return [{"path": path, "duration": total_len / 1000.0}]
     
-    chunk_paths = []
+    chunk_info = []
     current_start = 0
     chunk_count = 0
     
@@ -61,12 +61,13 @@ def process_and_split(input_path, temp_dir):
             
         # Extraer el segmento y exportarlo
         chunk = audio[current_start:actual_end]
+        duration_s = len(chunk) / 1000.0
         path = os.path.join(temp_dir, f"chunk_{chunk_count}.mp3")
         chunk.export(path, format="mp3", bitrate="64k")
-        chunk_paths.append(path)
+        chunk_info.append({"path": path, "duration": duration_s})
         
         # El siguiente fragmento empieza donde terminó este
         current_start = actual_end
         chunk_count += 1
         
-    return chunk_paths
+    return chunk_info

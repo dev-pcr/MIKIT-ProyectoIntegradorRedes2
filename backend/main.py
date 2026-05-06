@@ -145,13 +145,13 @@ class KeyPool:
 def run_groq_transcription(client, path):
     """
     Función auxiliar para llamar a la API de Groq.
-    Usa el modelo whisper-large-v3 para máxima precisión.
+    Usa el modelo whisper-large-v3 y solicita verbose_json para obtener marcas de tiempo.
     """
     with open(path, "rb") as audio_file:
         return client.audio.transcriptions.create(
             file=(os.path.basename(path), audio_file.read()),
             model="whisper-large-v3",
-            response_format="text",
+            response_format="verbose_json",
         )
 
 @app.post("/transcribe")
@@ -203,8 +203,14 @@ async def transcribe_audio(
             buffer_path = os.path.join(temp_dir, "transcription_buffer.txt")
             partial_error = None
             chunks_completed = 0
+            
+            accumulated_time = 0.0 # Offset global en segundos
+            last_end_time = 0.0    # Marca de tiempo global del último segmento
+            paragraph_threshold = 1.5 # Segundos de silencio para nuevo párrafo
 
-            for i, path in enumerate(chunk_paths):
+            for i, chunk_data in enumerate(chunk_paths):
+                path = chunk_data["path"]
+                duration = chunk_data["duration"]
                 current_chunk_success = False
                 
                 while not current_chunk_success:
@@ -229,8 +235,21 @@ async def transcribe_audio(
                     client = Groq(api_key=key)
                     try:
                         transcription = await asyncio.to_thread(run_groq_transcription, client, path)
+                        
+                        # Procesar los segmentos del JSON detallado
                         with open(buffer_path, "a", encoding="utf-8") as f:
-                            f.write(transcription + " ")
+                            for segment in transcription.segments:
+                                start_global = accumulated_time + segment.start
+                                end_global = accumulated_time + segment.end
+                                
+                                # Si hay un silencio mayor al umbral, insertamos párrafo
+                                if last_end_time > 0:
+                                    silence = start_global - last_end_time
+                                    if silence > paragraph_threshold:
+                                        f.write("\n\n")
+                                
+                                f.write(segment.text)
+                                last_end_time = end_global
                         
                         chunks_completed += 1
                         current_chunk_success = True
@@ -264,6 +283,9 @@ async def transcribe_audio(
                             print(f"ERROR FATAL en fragmento {i+1}: {str(e)}")
                             break
                 
+                # Al final de cada fragmento, actualizamos el tiempo acumulado
+                accumulated_time += duration
+
                 if partial_error:
                     break
             
