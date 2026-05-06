@@ -26,3 +26,5 @@
 - **Descripción**: Implementación completa de branding (logo e iconos). Se generó `icon.ico` a partir de `LOGO.png`, se actualizó `launcher.py` para establecer el icono de la ventana (barra de tareas) y se modificó `MIKIT-Desktop.spec` para incluir el icono en el ejecutable. También se actualizó el favicon del frontend en `index.html` y la carpeta `public/`.
 - **Motivo**: Cumplir con la solicitud del usuario de tener el logo personalizado en el acceso directo y la barra de tareas, reforzando la identidad visual del producto.
 
+- **Descripción**: Configuración e inicialización del repositorio Git y subida a GitHub (https://github.com/dev-pcr/MiKit.git). Se creó un archivo `.gitignore` optimizado para el stack (Vite + FastAPI + Desktop artifacts) para evitar la subida de binarios y dependencias pesadas.
+- **Motivo**: Establecer control de versiones formal y cumplir con el requerimiento de respaldo en la nube solicitado por el usuario.
