@@ -61,8 +61,14 @@ def cleanup():
             log("Backend terminado con taskkill")
         except Exception as e:
             log(f"Error en taskkill: {str(e)}")
-            if backend_process:
+            try:
                 backend_process.terminate()
+                backend_process.wait(timeout=3)
+            except:
+                pass
+        # Dar tiempo al SO para liberar archivos antes de que PyInstaller limpie _MEI
+        time.sleep(1)
+    log("Limpieza completada.")
 
 def launch_ui():
     start_backend()
@@ -85,7 +91,6 @@ def launch_ui():
         log("ERROR: El backend nunca respondió")
 
     # Directorio de datos persistente
-    # Usaremos una ruta más específica y absoluta
     home = os.path.expanduser("~")
     app_data = os.path.join(home, "Documents", "MIKIT_Data")
     
@@ -109,20 +114,20 @@ def launch_ui():
         f.write(time.strftime('%Y-%m-%d %H:%M:%S'))
 
     icon_path = os.path.join(get_base_path(), 'LOGO.png')
-    # Configurar la ventana principal
+    log(f"Ruta del icono: {icon_path} (existe: {os.path.exists(icon_path)})")
+
+    # Configurar la ventana principal (sin icon aquí, va en webview.start)
     window = webview.create_window(
         'MIKIT v1.0 — Transcriptor & Grabador', 
         url, 
         width=1280, 
         height=800,
         min_size=(1000, 700),
-        background_color='#09090b',
-        icon=icon_path
+        background_color='#09090b'
     )
     
     log(f"Iniciando WebView con storage_path={app_data}")
     try:
-        # En Windows, storage_path es la carpeta de datos de usuario de WebView2
         webview.start(storage_path=app_data, private_mode=False, debug=DEBUG)
     except Exception as e:
         log(f"Error en webview.start: {str(e)}")
