@@ -146,16 +146,22 @@ async def transcribe_audio(
             # 3. Transcribir
             yield f"data: {json.dumps({'status': 'transcribing', 'total': total, 'current': 0, 'message': f'Iniciando transcripción de {total} partes...'})}\n\n"
             
-            full_transcription = []
+            buffer_path = os.path.join(temp_dir, "transcription_buffer.txt")
             partial_error = None
+            chunks_completed = 0
+
             for i, path in enumerate(chunk_paths):
                 print(f"DEBUG: Transcribiendo fragmento {i+1}/{total}: {path}")
                 yield f"data: {json.dumps({'status': 'transcribing_chunk', 'chunk': i+1, 'total': total, 'message': f'Transcribiendo fragmento {i+1} de {total}...'})}\n\n"
                 
                 try:
                     transcription = await asyncio.to_thread(run_groq_transcription, client, path)
-                    full_transcription.append(transcription)
-                    print(f"DEBUG: Fragmento {i+1} completado.")
+                    # Escribir inmediatamente al buffer (disco) en lugar de solo RAM
+                    with open(buffer_path, "a", encoding="utf-8") as f:
+                        f.write(transcription + " ")
+                    
+                    chunks_completed += 1
+                    print(f"DEBUG: Fragmento {i+1} completado y guardado en buffer.")
                 except Exception as chunk_err:
                     error_detail = str(chunk_err)
                     if "rate_limit_exceeded" in error_detail.lower() or "429" in error_detail:
@@ -165,20 +171,24 @@ async def transcribe_audio(
                     break
             
             # 4. Unir
-            print("DEBUG: Uniendo transcripciones finales...")
+            print("DEBUG: Uniendo transcripciones finales desde buffer...")
             yield f"data: {json.dumps({'status': 'joining', 'message': 'Uniendo transcripciones...'})}\n\n"
-            joined = " ".join(full_transcription)
+            
+            joined = ""
+            if os.path.exists(buffer_path):
+                with open(buffer_path, "r", encoding="utf-8") as f:
+                    joined = f.read().strip()
             
             if partial_error:
                 if joined.strip():
-                    final_text = joined + f"\n\n---\n*(Transcripción parcial lograda hasta el fragmento {len(full_transcription)} de {total}. Ups, hubo un error y no pudimos continuar. Error: {partial_error})*"
+                    final_text = joined + f"\n\n---\n*(Transcripción parcial lograda hasta el fragmento {chunks_completed} de {total}. Ups, hubo un error y no pudimos continuar. Error: {partial_error})*"
                 else:
                     final_text = f"*(No se pudo transcribir ningún fragmento. Ups, hubo un error desde el inicio. Error: {partial_error})*"
             else:
                 final_text = joined
             
             # 5. Completar
-            print("DEBUG: Procesamiento finalizado.")
+            print(f"DEBUG: Procesamiento finalizado. Tamaño total: {len(final_text)} caracteres.")
             yield f"data: {json.dumps({'status': 'completed', 'text': final_text, 'message': 'Transcripción finalizada.' if not partial_error else 'Transcripción parcial (ver notas al final).'})}\n\n"
         
         except Exception as e:
