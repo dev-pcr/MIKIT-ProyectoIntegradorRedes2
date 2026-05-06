@@ -28,3 +28,19 @@
 
 - **Descripción**: Configuración e inicialización del repositorio Git y subida a GitHub (https://github.com/dev-pcr/MiKit.git). Se creó un archivo `.gitignore` optimizado para el stack (Vite + FastAPI + Desktop artifacts) para evitar la subida de binarios y dependencias pesadas.
 - **Motivo**: Establecer control de versiones formal y cumplir con el requerimiento de respaldo en la nube solicitado por el usuario.
+
+## 2026-05-06
+- **Descripción**: Se eliminó el límite de 25MB para archivos de audio en el Transcriptor. Se removió la validación en `handleFileDrop` y en el input de selección de archivo, y se actualizó el texto de la UI de "Max 25MB" a "Sin límite de tamaño".
+- **Motivo**: El backend ya fracciona el audio en chunks de 10 minutos antes de enviarlo a Groq, por lo que el límite de frontend era innecesario y bloqueaba archivos grandes legítimos.
+
+- **Descripción**: Se implementó la edición de plantillas de nombre en Configuración. Se agregó un botón `Editar` (lápiz) al lado del botón `Eliminar` en cada chip de plantilla. Al pulsarlo, se abre un modal glassmorphism con un input pre-cargado, con opciones de Guardar y Cancelar.
+- **Motivo**: Mejorar la usabilidad del módulo de plantillas, permitiendo modificar una plantilla existente sin tener que eliminarla y volver a crearla.
+
+- **Descripción**: Se agregó exportación masiva de historiales en Grabadora y Transcriptor. Un botón "Exportar Todo" crea una carpeta con timestamp en el Escritorio y guarda secuencialmente cada ítem (MP3 para grabaciones, .md para transcripciones). El sistema emite toasts de progreso ("Iniciando...", "Procesando X de Y...", "✅ Finalizado") y detiene el proceso con un mensaje de error descriptivo si algún ítem falla, incluyendo colisión de nombres mediante sufijos `(1)`, `(2)`.
+- **Motivo**: Facilitar la exportación de archivos al sistema operativo para backup o uso externo sin necesidad de descargar uno a uno.
+
+- **Descripción**: Se modificó el formato de exportación de audio a MP3 a 22050 Hz, 16 bits, 96 kbps (en lugar del anterior 192 kbps sin normalización). Se actualiza en el endpoint `/save_audio` del backend con pydub, aplicando `set_frame_rate(22050).set_sample_width(2)` antes de exportar.
+- **Motivo**: Cumplir con las especificaciones de audio del proyecto para archivos de salida: calidad adecuada para voz con tamaño de archivo razonable.
+
+- **Descripción**: Se implementó tolerancia a fallos parciales en el pipeline de transcripción. En el loop de chunks, cada llamada a Groq está envuelta en un `try/except` individual. Si un fragmento falla, el bucle se interrumpe, se unen los fragmentos exitosos y se añade al final del texto un mensaje indicando hasta qué fragmento se llegó y el error ocurrido. Si falla el primer fragmento (sin texto previo), se muestra un mensaje explicativo sin texto vacío.
+- **Motivo**: Mejorar la resiliencia del sistema: en lugar de perder todo el trabajo ante un error de API (rate limit, timeout), se preserva y presenta al usuario la transcripción parcial lograda.

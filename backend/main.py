@@ -147,22 +147,39 @@ async def transcribe_audio(
             yield f"data: {json.dumps({'status': 'transcribing', 'total': total, 'current': 0, 'message': f'Iniciando transcripción de {total} partes...'})}\n\n"
             
             full_transcription = []
+            partial_error = None
             for i, path in enumerate(chunk_paths):
                 print(f"DEBUG: Transcribiendo fragmento {i+1}/{total}: {path}")
                 yield f"data: {json.dumps({'status': 'transcribing_chunk', 'chunk': i+1, 'total': total, 'message': f'Transcribiendo fragmento {i+1} de {total}...'})}\n\n"
                 
-                transcription = await asyncio.to_thread(run_groq_transcription, client, path)
-                full_transcription.append(transcription)
-                print(f"DEBUG: Fragmento {i+1} completado.")
+                try:
+                    transcription = await asyncio.to_thread(run_groq_transcription, client, path)
+                    full_transcription.append(transcription)
+                    print(f"DEBUG: Fragmento {i+1} completado.")
+                except Exception as chunk_err:
+                    error_detail = str(chunk_err)
+                    if "rate_limit_exceeded" in error_detail.lower() or "429" in error_detail:
+                        error_detail = "Límite de la API de Groq alcanzado (rate limit)."
+                    partial_error = f"Error en fragmento {i+1} de {total}: {error_detail}"
+                    print(f"ERROR en fragmento {i+1}: {error_detail}")
+                    break
             
             # 4. Unir
             print("DEBUG: Uniendo transcripciones finales...")
             yield f"data: {json.dumps({'status': 'joining', 'message': 'Uniendo transcripciones...'})}\n\n"
-            final_text = " ".join(full_transcription)
+            joined = " ".join(full_transcription)
+            
+            if partial_error:
+                if joined.strip():
+                    final_text = joined + f"\n\n---\n*(Transcripción parcial lograda hasta el fragmento {len(full_transcription)} de {total}. Ups, hubo un error y no pudimos continuar. Error: {partial_error})*"
+                else:
+                    final_text = f"*(No se pudo transcribir ningún fragmento. Ups, hubo un error desde el inicio. Error: {partial_error})*"
+            else:
+                final_text = joined
             
             # 5. Completar
-            print("DEBUG: Todo completado con éxito.")
-            yield f"data: {json.dumps({'status': 'completed', 'text': final_text, 'message': 'Transcripción completada con éxito.'})}\n\n"
+            print("DEBUG: Procesamiento finalizado.")
+            yield f"data: {json.dumps({'status': 'completed', 'text': final_text, 'message': 'Transcripción finalizada.' if not partial_error else 'Transcripción parcial (ver notas al final).'})}\n\n"
         
         except Exception as e:
             import traceback
@@ -185,25 +202,39 @@ async def transcribe_audio(
 @app.post("/save_md")
 async def save_md(data: dict):
     """
-    Guarda un archivo Markdown directamente en el escritorio del usuario.
+    Guarda un archivo Markdown en el escritorio del usuario, opcionalmente dentro de una carpeta.
     """
     try:
         title = data.get("title", "transcripcion")
         content = data.get("content", "")
+        folder = data.get("folder", None)
         
         # Limpiar el nombre del archivo
         safe_title = "".join([c for c in title if c.isalnum() or c in (' ', '-', '_')]).strip()
-        filename = f"{safe_title}.md"
         
-        # Determinar la ruta del escritorio (ajustada a la estructura del usuario)
+        # Determinar la ruta base
         desktop_path = r"C:\Users\pablo\OneDrive\Desktop"
-        file_path = os.path.join(desktop_path, filename)
+        if folder:
+            safe_folder = "".join([c for c in folder if c.isalnum() or c in (' ', '-', '_')]).strip()
+            base_dir = os.path.join(desktop_path, safe_folder)
+            os.makedirs(base_dir, exist_ok=True)
+        else:
+            base_dir = desktop_path
+        
+        # Resolver colisión de nombres
+        filename = f"{safe_title}.md"
+        file_path = os.path.join(base_dir, filename)
+        counter = 1
+        while os.path.exists(file_path):
+            filename = f"{safe_title} ({counter}).md"
+            file_path = os.path.join(base_dir, filename)
+            counter += 1
         
         with open(file_path, "w", encoding="utf-8-sig") as f:
             f.write(content)
             
-        print(f"DEBUG: Archivo guardado en el escritorio: {file_path}")
-        return {"status": "success", "message": f"Archivo guardado en el escritorio: {filename}"}
+        print(f"DEBUG: Archivo guardado en: {file_path}")
+        return {"status": "success", "message": f"Archivo guardado: {filename}"}
     except Exception as e:
         print(f"ERROR al guardar en escritorio: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -211,10 +242,12 @@ async def save_md(data: dict):
 @app.post("/save_audio")
 async def save_audio(
     file: UploadFile = File(...),
-    title: str = Form(...)
+    title: str = Form(...),
+    folder: str = Form(None)
 ):
     """
-    Convierte el audio a MP3 y lo guarda directamente en el escritorio.
+    Convierte el audio a MP3 (22050Hz, 16bit, 96kbps) y lo guarda en el escritorio,
+    opcionalmente dentro de una subcarpeta para exportaciones masivas.
     """
     temp_dir = tempfile.mkdtemp()
     try:
@@ -223,22 +256,38 @@ async def save_audio(
         with open(input_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        # 2. Cargar con pydub y exportar como MP3
+        # 2. Cargar con pydub, normalizar y exportar como MP3 con parámetros específicos
         from pydub import AudioSegment
         audio = AudioSegment.from_file(input_path)
+        # Normalizar a 22050 Hz, 16 bits (sample_width=2 bytes)
+        audio = audio.set_frame_rate(22050).set_sample_width(2)
         
         # 3. Limpiar nombre del archivo final
         safe_title = "".join([c for c in title if c.isalnum() or c in (' ', '-', '_')]).strip()
-        filename = f"{safe_title}.mp3"
         
+        # 4. Determinar carpeta de destino
         desktop_path = r"C:\Users\pablo\OneDrive\Desktop"
-        output_path = os.path.join(desktop_path, filename)
+        if folder:
+            safe_folder = "".join([c for c in folder if c.isalnum() or c in (' ', '-', '_')]).strip()
+            base_dir = os.path.join(desktop_path, safe_folder)
+            os.makedirs(base_dir, exist_ok=True)
+        else:
+            base_dir = desktop_path
         
-        # Exportar con un bitrate razonable
-        audio.export(output_path, format="mp3", bitrate="192k")
+        # 5. Resolver colisión de nombres
+        filename = f"{safe_title}.mp3"
+        output_path = os.path.join(base_dir, filename)
+        counter = 1
+        while os.path.exists(output_path):
+            filename = f"{safe_title} ({counter}).mp3"
+            output_path = os.path.join(base_dir, filename)
+            counter += 1
         
-        print(f"DEBUG: Audio guardado en el escritorio como MP3: {output_path}")
-        return {"status": "success", "message": f"Audio guardado en el escritorio: {filename}"}
+        # 6. Exportar en 96kbps
+        audio.export(output_path, format="mp3", bitrate="96k")
+        
+        print(f"DEBUG: Audio guardado como MP3 (22050Hz/96kbps): {output_path}")
+        return {"status": "success", "message": f"Audio guardado: {filename}"}
     except Exception as e:
         print(f"ERROR al guardar audio en escritorio: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

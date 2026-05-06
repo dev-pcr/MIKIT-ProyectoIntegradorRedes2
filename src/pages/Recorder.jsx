@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Mic, Square, Play, Pause, Save, Trash2, RotateCcw, RotateCw, FileText, Edit2, Check, X, Copy, Volume2, FastForward, AlertCircle, Download, ChevronDown } from 'lucide-react'
+import { Mic, Square, Play, Pause, Save, Trash2, RotateCcw, RotateCw, FileText, Edit2, Check, X, Copy, Volume2, FastForward, AlertCircle, Download, ChevronDown, FolderDown, Loader2 } from 'lucide-react'
 import { saveRecording, getAllRecordings, deleteRecording, updateRecording } from '../utils/storage'
 import { getTemplates } from '../utils/preferences'
 import { useNavigate } from 'react-router-dom'
@@ -28,6 +28,7 @@ export default function Recorder() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [itemToDelete, setItemToDelete] = useState(null)
   const [toasts, setToasts] = useState([])
+  const [isExporting, setIsExporting] = useState(false)
 
   // Player state
   const [activePlayer, setActivePlayer] = useState(null)
@@ -197,6 +198,31 @@ export default function Recorder() {
     } catch (err) {
       addToast(err.message, 'error')
     }
+  }
+
+  const handleMassExportRecordings = async () => {
+    if (history.length === 0) {
+      addToast('No hay grabaciones para exportar', 'error')
+      return
+    }
+    setIsExporting(true)
+    const folderName = `MIKIT_Grabaciones_${new Date().toISOString().slice(0,10).replace(/-/g,'')}_${new Date().toTimeString().slice(0,5).replace(':','')}`
+    addToast(`Iniciando exportación de ${history.length} grabaciones...`, 'success')
+
+    let done = 0
+    for (const item of history) {
+      try {
+        addToast(`Procesando ${done + 1} de ${history.length}: ${item.name}`, 'success')
+        await saveAudioToDesktop(item.blob, item.name, folderName)
+        done++
+      } catch (err) {
+        addToast(`Exportación detenida en ${done}/${history.length}. Error en "${item.name}": ${err.message}`, 'error')
+        setIsExporting(false)
+        return
+      }
+    }
+    addToast(`✅ ${done} grabaciones exportadas en carpeta "${folderName}"`, 'success')
+    setIsExporting(false)
   }
 
   const handleTranscribe = (recording) => {
@@ -563,7 +589,18 @@ export default function Recorder() {
 
       {/* History */}
       <div className="flex flex-col gap-4">
-        <h3 className="text-xl font-display font-bold text-white px-2">Historial de Grabaciones</h3>
+        <div className="flex items-center justify-between px-2">
+          <h3 className="text-xl font-display font-bold text-white">Historial de Grabaciones</h3>
+          <button
+            onClick={handleMassExportRecordings}
+            disabled={isExporting || history.length === 0}
+            className="btn-secondary px-4 py-2 text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Exportar todas las grabaciones como MP3 en una carpeta del Escritorio"
+          >
+            {isExporting ? <Loader2 size={16} className="animate-spin" /> : <FolderDown size={16} />}
+            {isExporting ? 'Exportando...' : 'Exportar Todo'}
+          </button>
+        </div>
         <div className="grid grid-cols-1 gap-3 pb-8">
           {history.length === 0 ? (
             <div className="p-12 text-center text-zinc-500 border border-dashed border-white/10 rounded-3xl">

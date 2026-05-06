@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion'
-import { Upload, FileAudio, X, Copy, Download, Save, Loader2, AlertCircle, Trash2, ChevronRight, FileText, Check, CheckCircle2, Circle, CircleAlert, CircleDotDashed, CircleX } from 'lucide-react'
+import { Upload, FileAudio, X, Copy, Download, Save, Loader2, AlertCircle, Trash2, ChevronRight, FileText, Check, CheckCircle2, Circle, CircleAlert, CircleDotDashed, CircleX, FolderDown } from 'lucide-react'
 import { transcribeAudioStream, saveToDesktop } from '../utils/api'
 import { getActiveApiKey, getTranscriptions, addTranscription, deleteTranscription } from '../utils/preferences'
 import { useLocation } from 'react-router-dom'
@@ -23,6 +23,9 @@ export default function Transcriber() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [itemToDelete, setItemToDelete] = useState(null)
   const [toasts, setToasts] = useState([])
+
+  // Mass export state
+  const [isExporting, setIsExporting] = useState(false)
 
   // Progress UI States
   const [tasks, setTasks] = useState([]);
@@ -53,13 +56,37 @@ export default function Transcriber() {
     e.preventDefault()
     const droppedFile = e.dataTransfer.files[0]
     if (droppedFile) {
-      if (droppedFile.size > 25 * 1024 * 1024) {
-        addToast('El archivo supera el límite de 25MB', 'error')
-        return
-      }
       setFile(droppedFile)
       setFileName(droppedFile.name)
     }
+  }
+
+  const handleMassExport = async () => {
+    const items = getTranscriptions().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    if (items.length === 0) {
+      addToast('No hay transcripciones para exportar', 'error')
+      return
+    }
+    setIsExporting(true)
+    const folderName = `MIKIT_Transcripciones_${new Date().toISOString().slice(0,10).replace(/-/g,'')}_${new Date().toTimeString().slice(0,5).replace(':','')}`
+    addToast(`Iniciando exportación de ${items.length} transcripciones...`, 'success')
+
+    let done = 0
+    for (const item of items) {
+      try {
+        addToast(`Procesando ${done + 1} de ${items.length}: ${item.name}`, 'success')
+        const dateStr = new Date(item.createdAt).toLocaleString('es-AR')
+        const mdContent = `# Transcripción: ${item.name}\n**Fecha:** ${dateStr}\n\n---\n\n${item.text}`
+        await saveToDesktop(item.name, mdContent, folderName)
+        done++
+      } catch (err) {
+        addToast(`Exportación detenida en ${done}/${items.length}. Error en "${item.name}": ${err.message}`, 'error')
+        setIsExporting(false)
+        return
+      }
+    }
+    addToast(`✅ ${done} transcripciones exportadas en carpeta "${folderName}"`, 'success')
+    setIsExporting(false)
   }
 
   const startTranscription = async () => {
@@ -301,7 +328,7 @@ export default function Transcriber() {
             </div>
             <div className="text-center space-y-2">
               <p className="text-xl font-semibold text-white">Arrastra tus archivos aquí</p>
-              <p className="text-zinc-500 text-sm">MP3, MP4, WAV, M4A, OGG (Max 25MB)</p>
+              <p className="text-zinc-500 text-sm">MP3, MP4, WAV, M4A, OGG · Sin límite de tamaño</p>
             </div>
             <label className="btn-secondary cursor-pointer">
               Seleccionar archivo
@@ -311,13 +338,8 @@ export default function Transcriber() {
                 accept=".mp3,.mp4,.wav,.m4a,.webm,.ogg" 
                 onChange={(e) => {
                   if (e.target.files[0]) {
-                    const selectedFile = e.target.files[0]
-                    if (selectedFile.size > 25 * 1024 * 1024) {
-                      addToast('El archivo supera el límite de 25MB', 'error')
-                      return
-                    }
-                    setFile(selectedFile)
-                    setFileName(selectedFile.name)
+                    setFile(e.target.files[0])
+                    setFileName(e.target.files[0].name)
                   }
                 }} 
               />
@@ -543,7 +565,18 @@ export default function Transcriber() {
 
       {/* History Panel */}
       <div className="pt-8 border-t border-white/5">
-        <h3 className="text-xl font-bold text-white mb-6">Historial de Transcripciones</h3>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold text-white">Historial de Transcripciones</h3>
+          <button
+            onClick={handleMassExport}
+            disabled={isExporting || history.length === 0}
+            className="btn-secondary px-4 py-2 text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Exportar todo el historial como archivos .md en una carpeta del Escritorio"
+          >
+            {isExporting ? <Loader2 size={16} className="animate-spin" /> : <FolderDown size={16} />}
+            {isExporting ? 'Exportando...' : 'Exportar Todo'}
+          </button>
+        </div>
         <div className="grid gap-3">
           {history.length === 0 ? (
              <div className="p-8 text-center text-zinc-500 border border-dashed border-white/10 rounded-2xl">

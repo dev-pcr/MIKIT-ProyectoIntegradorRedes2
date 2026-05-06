@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Key, Plus, Trash2, ShieldCheck, LayoutTemplate, AlertCircle, Check } from 'lucide-react'
+import { Key, Plus, Trash2, ShieldCheck, LayoutTemplate, AlertCircle, Check, Edit2 } from 'lucide-react'
 import { getApiKeys, saveApiKeys, getTemplates, saveTemplates } from '../utils/preferences'
 
 export default function Settings() {
@@ -15,6 +15,11 @@ export default function Settings() {
   const [toasts, setToasts] = useState([])
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [itemToDelete, setItemToDelete] = useState(null)
+
+  // Template edit modal
+  const [editTemplateModal, setEditTemplateModal] = useState(false)
+  const [editTemplateIndex, setEditTemplateIndex] = useState(null)
+  const [editTemplateValue, setEditTemplateValue] = useState('')
 
   useEffect(() => {
     setKeys(getApiKeys())
@@ -111,6 +116,25 @@ export default function Settings() {
     addToast('Plantilla guardada', 'success')
   }
 
+  const handleOpenEditTemplate = (index, value) => {
+    setEditTemplateIndex(index)
+    setEditTemplateValue(value)
+    setEditTemplateModal(true)
+  }
+
+  const handleSaveEditTemplate = () => {
+    if (!editTemplateValue.trim()) return
+    setTemplates(prevTemplates => {
+      const updated = prevTemplates.map((t, i) => i === editTemplateIndex ? editTemplateValue.trim() : t)
+      saveTemplates(updated)
+      return updated
+    })
+    setEditTemplateModal(false)
+    setEditTemplateIndex(null)
+    setEditTemplateValue('')
+    addToast('Plantilla actualizada', 'success')
+  }
+
   const maskKey = (keyString) => {
     if (keyString.length <= 8) return '********';
     return `${keyString.slice(0, 4)}...${keyString.slice(-4)}`;
@@ -140,6 +164,47 @@ export default function Settings() {
           ))}
         </AnimatePresence>
       </div>
+
+      {/* Edit Template Modal */}
+      <AnimatePresence>
+        {editTemplateModal ? (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="glass-card p-8 w-full max-w-sm space-y-6"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-brand-500/10 flex items-center justify-center text-brand-500">
+                  <Edit2 size={20} />
+                </div>
+                <h3 className="text-xl font-bold text-white">Editar Plantilla</h3>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-zinc-400">Nombre de la plantilla</label>
+                <input
+                  type="text"
+                  value={editTemplateValue}
+                  onChange={(e) => setEditTemplateValue(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-brand-500 transition-all"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' ? handleSaveEditTemplate() : null}
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setEditTemplateModal(false); setEditTemplateIndex(null); setEditTemplateValue(''); }}
+                  className="btn-secondary flex-1"
+                >
+                  Cancelar
+                </button>
+                <button onClick={handleSaveEditTemplate} className="btn-primary flex-1">Guardar</button>
+              </div>
+            </motion.div>
+          </div>
+        ) : null}
+      </AnimatePresence>
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
@@ -260,7 +325,14 @@ export default function Settings() {
             {templates.map((t, i) => (
               <div key={i} className="glass bg-white/5 px-4 py-2 rounded-xl flex items-center gap-2 group border-brand-500/20">
                 <span className="text-sm text-white font-medium">{t}</span>
-                <button onClick={() => confirmDeleteTemplate(t)} className="text-zinc-500 hover:text-red-500 transition-colors">
+                <button
+                  onClick={() => handleOpenEditTemplate(i, t)}
+                  className="text-zinc-500 hover:text-brand-400 transition-colors"
+                  title="Editar plantilla"
+                >
+                  <Edit2 size={14} />
+                </button>
+                <button onClick={() => confirmDeleteTemplate(t)} className="text-zinc-500 hover:text-red-500 transition-colors" title="Eliminar plantilla">
                   <Trash2 size={14} />
                 </button>
               </div>

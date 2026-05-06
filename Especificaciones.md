@@ -104,6 +104,7 @@ Después de guardar, aparece un reproductor inline para escuchar la grabación r
   - Play / Pausa, barra de scrubbing, velocidad de reproducción (0.5x, 1x, 1.5x, 2x), tiempo actual / total.
 - **Renombrar**: edición inline o modal con campo de texto. Confirmar con Enter o botón.
 - **Eliminar**: ventana modal de confirmación antes de eliminar ("¿Eliminar esta grabación? Esta acción no se puede deshacer.").
+- **Exportar Todo**: botón en el encabezado del historial. Crea una carpeta con timestamp en el Escritorio (`MIKIT_Grabaciones_YYYYMMDD_HHMM`) y guarda todas las grabaciones como MP3 (22050 Hz, 16 bits, 96 kbps). Muestra alertas de progreso y detiene la exportación en caso de error, indicando hasta qué punto se completó.
 
 **Ordenamiento:** por fecha (más reciente primero, por defecto). Opcional: ordenar por nombre o duración.
 
@@ -117,7 +118,7 @@ Después de guardar, aparece un reproductor inline para escuchar la grabación r
 
 - Zona de carga con **drag & drop** + botón de selección de archivo.
 - Formatos aceptados: `.mp3`, `.mp4`, `.wav`, `.webm`, `.m4a`, `.ogg`.
-- Límite de tamaño: definido por la API de Groq (mostrar si aplica).
+- Sin límite de tamaño de archivo desde el frontend. El backend divide el audio automáticamente en fragmentos de hasta 10 minutos para enviarlo a Groq.
 - Al seleccionar archivo: mostrar nombre, tamaño y tipo.
 
 ---
@@ -152,6 +153,8 @@ Después de guardar, aparece un reproductor inline para escuchar la grabación r
 - Nombre del archivo original.
 - Fecha de guardado (`DD/MM/YYYY HH:MM`).
 - Acciones inline: ` Copiar`, ` Eliminar`.
+
+**Exportar Todo:** botón en el encabezado del historial. Crea una carpeta con timestamp en el Escritorio (`MIKIT_Transcripciones_YYYYMMDD_HHMM`) y guarda cada transcripción como archivo `.md`. Emite alertas de progreso secuenciales. Si un archivo falla, detiene el proceso e informa el error exacto. Los nombres duplicados reciben sufijos `(1)`, `(2)` automáticamente.
 
 **Al hacer clic en un ítem:** se expande o abre un modal con el texto completo y las opciones: `Copiar`, `Descargar .md`, `Eliminar`.
 
@@ -213,9 +216,9 @@ El archivo `.md` descargado debe tener la siguiente estructura:
 ## Manejo de Errores
 
 - Sin micrófono disponible: mensaje claro + instrucciones para habilitar permisos.
-- Error de API (Groq): mostrar código/mensaje + botón reintentar. Si la clave es inválida, redirigir a `/configuracion`.
+- Error de API (Groq): si el error ocurre durante el procesamiento de un fragmento, se preserva el texto transcrito hasta ese punto y se muestra al final un mensaje indicando el fragmento en el que se detuvo y el error específico (ej. rate limit, timeout). Si el error ocurre en el primer fragmento (sin texto previo), se muestra un mensaje explicativo completo.
 - Sin API Key configurada: bloquear el botón de transcribir + aviso con link a `/configuracion`.
-- Archivo inválido o muy grande: mensaje de error específico en la zona de carga.
+- Archivo inválido: mensaje de error específico en la zona de carga.
 
 ---
 

@@ -49,13 +49,13 @@ export async function checkBackendStatus() {
   }
 }
 
-export const saveToDesktop = async (title, content) => {
+export const saveToDesktop = async (title, content, folderName = null) => {
   const response = await fetch(`${API_BASE_URL}/save_md`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ title, content }),
+    body: JSON.stringify({ title, content, folder: folderName }),
   });
   
   if (!response.ok) {
@@ -66,10 +66,11 @@ export const saveToDesktop = async (title, content) => {
   return await response.json();
 };
 
-export const saveAudioToDesktop = async (blob, title) => {
+export const saveAudioToDesktop = async (blob, title, folderName = null) => {
   const formData = new FormData();
   formData.append('file', blob);
   formData.append('title', title);
+  if (folderName) formData.append('folder', folderName);
   
   const response = await fetch(`${API_BASE_URL}/save_audio`, {
     method: 'POST',
