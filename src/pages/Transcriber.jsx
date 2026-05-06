@@ -12,7 +12,7 @@ export default function Transcriber() {
   const [status, setStatus] = useState('idle') // idle, uploading, transcribing, ready
   const [result, setResult] = useState('')
   const [error, setError] = useState(null)
-  
+
   // History and Saving states
   const [history, setHistory] = useState([])
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false)
@@ -68,7 +68,7 @@ export default function Transcriber() {
       return
     }
     setIsExporting(true)
-    const folderName = `MIKIT_Transcripciones_${new Date().toISOString().slice(0,10).replace(/-/g,'')}_${new Date().toTimeString().slice(0,5).replace(':','')}`
+    const folderName = `MIKIT_Transcripciones_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_${new Date().toTimeString().slice(0, 5).replace(':', '')}`
     addToast(`Iniciando exportación de ${items.length} transcripciones...`, 'success')
 
     let done = 0
@@ -92,15 +92,21 @@ export default function Transcriber() {
   const startTranscription = async () => {
     setStatus('transcribing')
     setError(null)
-    
+
     // Initial Tasks Setup
     setTasks([
       { id: "1", title: "Fraccionando audio", description: "Preparando el archivo y dividiéndolo en partes para procesarlo óptimamente.", status: "pending", subtasks: [] },
       { id: "2", title: "Transcribiendo fragmentos", description: "Enviando cada parte al modelo Whisper para su transcripción.", status: "pending", subtasks: [] },
-      { id: "3", title: "Ensamblando resultado", description: "Uniendo las transcripciones de cada fragmento en el texto final.", status: "pending", subtasks: [] }
+      {
+        id: "3", title: "Ensamblando resultado", description: "Uniendo las transcripciones de cada fragmento en el texto final.", status: "pending", subtasks: [
+          { id: "3.1", title: "Leyendo memoria temporal", status: "pending" },
+          { id: "3.2", title: "Normalizando texto", status: "pending" },
+          { id: "3.3", title: "Preparando respuesta final", status: "pending" }
+        ]
+      }
     ]);
     setExpandedTasks(["1", "2", "3"]);
-    
+
     try {
       const apiKey = getActiveApiKey()
       if (!apiKey) {
@@ -108,7 +114,7 @@ export default function Transcriber() {
       }
 
       const fileToUpload = file instanceof File ? file : new File([file], fileName || 'audio.wav', { type: file.type || 'audio/wav' })
-      
+
       await transcribeAudioStream(fileToUpload, apiKey, (event) => {
         setTasks(prev => prev.map(t => {
           if (event.status === 'splitting' && t.id === "1") return { ...t, status: "in-progress" };
@@ -116,49 +122,75 @@ export default function Transcriber() {
             if (t.id === "1") return { ...t, status: "completed" };
             if (t.id === "2") {
               const subtasks = Array.from({ length: event.total }).map((_, i) => ({
-                id: `2.${i+1}`,
-                title: `Transcribir fragmento ${i+1}`,
+                id: `2.${i + 1}`,
+                title: `Transcribir fragmento ${i + 1}`,
                 status: "pending"
               }));
               return { ...t, status: "in-progress", subtasks };
             }
           }
           if (event.status === 'transcribing_chunk' && t.id === "2") {
-             const subtasks = t.subtasks.map(s => {
-                const num = parseInt(s.id.split('.')[1]);
-                if (num < event.chunk) return { ...s, status: "completed" };
-                if (num === event.chunk) return { ...s, status: "in-progress" };
-                return s;
-             });
-             return { ...t, subtasks };
+            const subtasks = t.subtasks.map(s => {
+              const num = parseInt(s.id.split('.')[1]);
+              if (num < event.chunk) return { ...s, status: "completed" };
+              if (num === event.chunk) return { ...s, status: "in-progress" };
+              return s;
+            });
+            return { ...t, subtasks };
           }
-          if (event.status === 'joining') {
+          if (event.status === 'joining' || event.status === 'joining_buffer') {
             if (t.id === "2") {
               return { ...t, status: "completed", subtasks: t.subtasks.map(s => ({ ...s, status: "completed" })) };
             }
-            if (t.id === "3") return { ...t, status: "in-progress" };
+            if (t.id === "3") {
+              return {
+                ...t,
+                status: "in-progress",
+                subtasks: t.subtasks.map(s => s.id === "3.1" ? { ...s, status: "in-progress" } : s)
+              };
+            }
+          }
+          if (event.status === 'joining_processing' && t.id === "3") {
+            return {
+              ...t,
+              subtasks: t.subtasks.map(s => {
+                if (s.id === "3.1") return { ...s, status: "completed" };
+                if (s.id === "3.2") return { ...s, status: "in-progress" };
+                return s;
+              })
+            };
+          }
+          if (event.status === 'joining_finalizing' && t.id === "3") {
+            return {
+              ...t,
+              subtasks: t.subtasks.map(s => {
+                if (s.id === "3.1" || s.id === "3.2") return { ...s, status: "completed" };
+                if (s.id === "3.3") return { ...s, status: "in-progress" };
+                return s;
+              })
+            };
           }
           if (event.status === 'completed') {
-             if (t.id === "3") return { ...t, status: "completed" };
+            if (t.id === "3") return { ...t, status: "completed", subtasks: t.subtasks.map(s => ({ ...s, status: "completed" })) };
           }
           if (event.status === 'error') {
-             if (t.status === "in-progress") return { ...t, status: "failed" };
+            if (t.status === "in-progress") return { ...t, status: "failed" };
           }
           return t;
         }));
 
         if (event.status === 'completed') {
-           setResult(event.text);
-           setSaveName(fileName || 'Transcripción Nueva');
-           setStatus('ready');
-           addToast('Transcripción completada con éxito', 'success');
+          setResult(event.text);
+          setSaveName(fileName || 'Transcripción Nueva');
+          setStatus('ready');
+          addToast('Transcripción completada con éxito', 'success');
         } else if (event.status === 'error') {
-           setError(event.detail || event.message);
-           setStatus('idle');
-           addToast('Error al transcribir', 'error');
+          setError(event.detail || event.message);
+          setStatus('idle');
+          addToast('Error al transcribir', 'error');
         }
       });
-      
+
     } catch (err) {
       console.error(err)
       setError(err.message)
@@ -254,7 +286,7 @@ export default function Transcriber() {
       <AnimatePresence>
         {deleteModalOpen ? (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -268,7 +300,7 @@ export default function Transcriber() {
                 <p className="text-sm text-zinc-400">¿Estás seguro de que quieres eliminar <span className="text-white font-medium">"{itemToDelete?.name}"</span>?</p>
               </div>
               <div className="flex gap-3 pt-2">
-                <button 
+                <button
                   onClick={() => { setDeleteModalOpen(false); setItemToDelete(null); }}
                   className="btn-secondary flex-1"
                 >
@@ -287,7 +319,7 @@ export default function Transcriber() {
       <AnimatePresence>
         {isSaveModalOpen ? (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               className="glass-card p-8 w-full max-w-md space-y-6"
@@ -295,8 +327,8 @@ export default function Transcriber() {
               <h3 className="text-2xl font-bold text-white">Guardar en Historial</h3>
               <div className="space-y-2">
                 <label className="text-sm text-zinc-400">Nombre de la transcripción</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={saveName}
                   onChange={(e) => setSaveName(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-brand-500 transition-all"
@@ -332,16 +364,16 @@ export default function Transcriber() {
             </div>
             <label className="btn-secondary cursor-pointer">
               Seleccionar archivo
-              <input 
-                type="file" 
-                className="hidden" 
-                accept=".mp3,.mp4,.wav,.m4a,.webm,.ogg" 
+              <input
+                type="file"
+                className="hidden"
+                accept=".mp3,.mp4,.wav,.m4a,.webm,.ogg"
                 onChange={(e) => {
                   if (e.target.files[0]) {
                     setFile(e.target.files[0])
                     setFileName(e.target.files[0].name)
                   }
-                }} 
+                }}
               />
             </label>
           </motion.div>
@@ -400,7 +432,7 @@ export default function Transcriber() {
                 <p className="text-sm text-zinc-400">Sigue el progreso de la transcripción en tiempo real.</p>
               </div>
             </div>
-            
+
             <LayoutGroup>
               <div className="overflow-hidden">
                 <ul className="space-y-2">
@@ -416,7 +448,7 @@ export default function Transcriber() {
                         animate="visible"
                         variants={taskVariants}
                       >
-                        <motion.div 
+                        <motion.div
                           className="group flex items-center px-3 py-2 rounded-lg cursor-pointer"
                           onClick={() => toggleTaskExpansion(task.id)}
                           whileHover={{ backgroundColor: "rgba(255,255,255,0.03)", transition: { duration: 0.2 } }}
@@ -455,15 +487,14 @@ export default function Transcriber() {
 
                             <div className="flex flex-shrink-0 items-center">
                               <motion.span
-                                className={`rounded px-2 py-1 text-xs font-semibold ${
-                                  task.status === "completed"
+                                className={`rounded px-2 py-1 text-xs font-semibold ${task.status === "completed"
                                     ? "bg-green-500/10 text-green-400"
                                     : task.status === "in-progress"
                                       ? "bg-brand-500/10 text-brand-400"
                                       : task.status === "failed"
                                         ? "bg-red-500/10 text-red-400"
                                         : "bg-white/5 text-zinc-500"
-                                }`}
+                                  }`}
                                 variants={statusBadgeVariants}
                                 initial="initial"
                                 animate="animate"
@@ -477,7 +508,7 @@ export default function Transcriber() {
 
                         <AnimatePresence mode="wait">
                           {isExpanded && task.subtasks && task.subtasks.length > 0 && (
-                            <motion.div 
+                            <motion.div
                               className="relative overflow-hidden"
                               variants={subtaskListVariants}
                               initial="hidden"
@@ -547,13 +578,13 @@ export default function Transcriber() {
               </div>
             </div>
             <div className="glass-card p-8 min-h-[400px] prose prose-invert max-w-none prose-brand">
-              <textarea 
+              <textarea
                 className="w-full min-h-[400px] bg-transparent resize-none outline-none font-sans text-zinc-300 leading-relaxed"
                 value={result}
                 onChange={(e) => setResult(e.target.value)}
               />
             </div>
-            <button 
+            <button
               onClick={() => { setFile(null); setStatus('idle'); }}
               className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors"
             >
@@ -579,13 +610,13 @@ export default function Transcriber() {
         </div>
         <div className="grid gap-3">
           {history.length === 0 ? (
-             <div className="p-8 text-center text-zinc-500 border border-dashed border-white/10 rounded-2xl">
-               No hay transcripciones en el historial.
-             </div>
+            <div className="p-8 text-center text-zinc-500 border border-dashed border-white/10 rounded-2xl">
+              No hay transcripciones en el historial.
+            </div>
           ) : (
             history.map((item) => (
               <div key={item.id} className="glass-card border-white/5 overflow-hidden transition-all duration-300 hover:border-brand-500/30">
-                <div 
+                <div
                   className="p-4 flex items-center justify-between cursor-pointer"
                   onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
                 >
@@ -599,14 +630,14 @@ export default function Transcriber() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button 
+                    <button
                       onClick={(e) => { e.stopPropagation(); handleCopy(item.text); }}
                       className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors"
                       title="Copiar texto"
                     >
                       <Copy size={18} />
                     </button>
-                    <button 
+                    <button
                       onClick={(e) => { e.stopPropagation(); confirmDelete(item); }}
                       className="p-2 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
                       title="Eliminar"
@@ -629,7 +660,7 @@ export default function Transcriber() {
                     >
                       <div className="p-6">
                         <div className="flex justify-end gap-2 mb-4">
-                           <button onClick={() => handleSaveToDesktop(item.name, item.text)} className="btn-secondary px-3 py-1.5 text-xs"><Save size={14} /> Escritorio</button>
+                          <button onClick={() => handleSaveToDesktop(item.name, item.text)} className="btn-secondary px-3 py-1.5 text-xs"><Save size={14} /> Escritorio</button>
                         </div>
                         <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{item.text}</p>
                       </div>

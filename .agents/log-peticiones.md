@@ -41,6 +41,16 @@
 
 - **Descripción**: Se modificó el formato de exportación de audio a MP3 a 22050 Hz, 16 bits, 96 kbps (en lugar del anterior 192 kbps sin normalización). Se actualiza en el endpoint `/save_audio` del backend con pydub, aplicando `set_frame_rate(22050).set_sample_width(2)` antes de exportar.
 - **Motivo**: Cumplir con las especificaciones de audio del proyecto para archivos de salida: calidad adecuada para voz con tamaño de archivo razonable.
+- **Motivo**: Cumplir con las especificaciones de audio del proyecto para archivos de salida: calidad adecuada para voz con tamaño de archivo razonable.
 
-- **Descripción**: Se implementó tolerancia a fallos parciales en el pipeline de transcripción. En el loop de chunks, cada llamada a Groq está envuelta en un `try/except` individual. Si un fragmento falla, el bucle se interrumpe, se unen los fragmentos exitosos y se añade al final del texto un mensaje indicando hasta qué fragmento se llegó y el error ocurrido. Si falla el primer fragmento (sin texto previo), se muestra un mensaje explicativo sin texto vacío.
+- **Descripción**: Se implementó tolerancia a fallos parciales en el pipeline de transcripción. En el loop de chunks, cada llamada a Groq está envuelta en un try/except individual. Si un fragmento falla, el bucle se interrumpe, se unen los fragmentos exitosos y se añade al final del texto un mensaje indicando hasta qué fragmento se llegó y el error ocurrido.
 - **Motivo**: Mejorar la resiliencia del sistema: en lugar de perder todo el trabajo ante un error de API (rate limit, timeout), se preserva y presenta al usuario la transcripción parcial lograda.
+
+- **Descripción**: Mejora de la visibilidad y estabilidad del pipeline de transcripción. Se corrigió un error crítico en el parser de SSE (src/utils/api.js) que causaba bloqueos con archivos grandes al no manejar payloads fragmentados. Se añadieron sub-pasos detallados (
+Leyendo
+memoria
+temporal, Normalizando
+texto, Preparando
+respuesta
+final) al proceso de ensamblado tanto en el backend (main.py) como en el frontend (Transcriber.jsx).
+- **Motivo**: Resolver el problema de la aplicación quedándose trabada al final de transcripciones largas y mejorar la experiencia de usuario proporcionando feedback visual más granular.

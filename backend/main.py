@@ -172,13 +172,15 @@ async def transcribe_audio(
             
             # 4. Unir
             print("DEBUG: Uniendo transcripciones finales desde buffer...")
-            yield f"data: {json.dumps({'status': 'joining', 'message': 'Uniendo transcripciones...'})}\n\n"
+            yield f"data: {json.dumps({'status': 'joining_buffer', 'message': 'Leyendo memoria temporal...'})}\n\n"
             
             joined = ""
             if os.path.exists(buffer_path):
                 with open(buffer_path, "r", encoding="utf-8") as f:
                     joined = f.read().strip()
-            
+            print(f"DEBUG: Buffer leído. Longitud: {len(joined)} caracteres.")
+
+            yield f"data: {json.dumps({'status': 'joining_processing', 'message': 'Normalizando texto...'})}\n\n"
             if partial_error:
                 if joined.strip():
                     final_text = joined + f"\n\n---\n*(Transcripción parcial lograda hasta el fragmento {chunks_completed} de {total}. Ups, hubo un error y no pudimos continuar. Error: {partial_error})*"
@@ -186,6 +188,9 @@ async def transcribe_audio(
                     final_text = f"*(No se pudo transcribir ningún fragmento. Ups, hubo un error desde el inicio. Error: {partial_error})*"
             else:
                 final_text = joined
+            
+            yield f"data: {json.dumps({'status': 'joining_finalizing', 'message': 'Preparando respuesta final...'})}\n\n"
+            print("DEBUG: Respuesta final preparada.")
             
             # 5. Completar
             print(f"DEBUG: Procesamiento finalizado. Tamaño total: {len(final_text)} caracteres.")

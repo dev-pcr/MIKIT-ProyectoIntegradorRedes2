@@ -19,13 +19,18 @@ export async function transcribeAudioStream(file, apiKey, onProgress) {
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8");
+  let lineBuffer = "";
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
-    const chunk = decoder.decode(value, { stream: true });
-    const lines = chunk.split('\n');
+    lineBuffer += decoder.decode(value, { stream: true });
+    const lines = lineBuffer.split('\n');
+    
+    // El último elemento de 'lines' podría estar incompleto (sin el \n final)
+    // así que lo guardamos en el buffer para la siguiente lectura.
+    lineBuffer = lines.pop();
 
     for (const line of lines) {
       if (line.startsWith('data: ')) {
@@ -36,6 +41,16 @@ export async function transcribeAudioStream(file, apiKey, onProgress) {
           console.error("Error parsing stream data", e);
         }
       }
+    }
+  }
+
+  // Procesar cualquier línea remanente al finalizar
+  if (lineBuffer.startsWith('data: ')) {
+    try {
+      const data = JSON.parse(lineBuffer.substring(6));
+      if (onProgress) onProgress(data);
+    } catch (e) {
+      console.error("Error parsing final stream data", e);
     }
   }
 }
