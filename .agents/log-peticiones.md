@@ -54,3 +54,6 @@ texto, Preparando
 respuesta
 final) al proceso de ensamblado tanto en el backend (main.py) como en el frontend (Transcriber.jsx).
 - **Motivo**: Resolver el problema de la aplicación quedándose trabada al final de transcripciones largas y mejorar la experiencia de usuario proporcionando feedback visual más granular.
+
+- **Descripción**: Implementación del Plan V2 para el pipeline de transcripción. Se añadió lógica de reintentos automáticos con Backoff Exponencial (5s, 15s) en el backend (main.py) para manejar errores de Rate Limit (429) de forma reactiva. Se actualizó la interfaz (Transcriber.jsx) para mostrar advertencias y contadores de reintento en tiempo real.
+- **Motivo**: Optimizar la eficiencia del sistema (evitando pausas preventivas innecesarias) y asegurar que audios largos se completen íntegramente incluso bajo restricciones de API.

@@ -154,20 +154,39 @@ async def transcribe_audio(
                 print(f"DEBUG: Transcribiendo fragmento {i+1}/{total}: {path}")
                 yield f"data: {json.dumps({'status': 'transcribing_chunk', 'chunk': i+1, 'total': total, 'message': f'Transcribiendo fragmento {i+1} de {total}...'})}\n\n"
                 
-                try:
-                    transcription = await asyncio.to_thread(run_groq_transcription, client, path)
-                    # Escribir inmediatamente al buffer (disco) en lugar de solo RAM
-                    with open(buffer_path, "a", encoding="utf-8") as f:
-                        f.write(transcription + " ")
-                    
-                    chunks_completed += 1
-                    print(f"DEBUG: Fragmento {i+1} completado y guardado en buffer.")
-                except Exception as chunk_err:
-                    error_detail = str(chunk_err)
-                    if "rate_limit_exceeded" in error_detail.lower() or "429" in error_detail:
-                        error_detail = "Límite de la API de Groq alcanzado (rate limit)."
-                    partial_error = f"Error en fragmento {i+1} de {total}: {error_detail}"
-                    print(f"ERROR en fragmento {i+1}: {error_detail}")
+                max_retries = 3
+                retry_count = 0
+                success = False
+                
+                while retry_count < max_retries and not success:
+                    try:
+                        transcription = await asyncio.to_thread(run_groq_transcription, client, path)
+                        # Escribir inmediatamente al buffer (disco) en lugar de solo RAM
+                        with open(buffer_path, "a", encoding="utf-8") as f:
+                            f.write(transcription + " ")
+                        
+                        chunks_completed += 1
+                        success = True
+                        print(f"DEBUG: Fragmento {i+1} completado (intento {retry_count + 1}).")
+                    except Exception as chunk_err:
+                        retry_count += 1
+                        error_detail = str(chunk_err)
+                        is_rate_limit = "rate_limit_exceeded" in error_detail.lower() or "429" in error_detail
+                        
+                        if is_rate_limit and retry_count < max_retries:
+                            wait_time = 5 if retry_count == 1 else 15
+                            print(f"DEBUG: Rate limit en fragmento {i+1}. Reintentando en {wait_time}s... (Intento {retry_count}/{max_retries})")
+                            yield f"data: {json.dumps({'status': 'retrying', 'chunk': i+1, 'attempt': retry_count, 'max_attempts': max_retries, 'wait': wait_time, 'message': f'Límite alcanzado. Reintentando fragmento {i+1} en {wait_time}s...'})}\n\n"
+                            await asyncio.sleep(wait_time)
+                        else:
+                            # Si no es rate limit o agotamos reintentos
+                            if is_rate_limit:
+                                error_detail = "Límite de la API de Groq alcanzado (se agotaron los reintentos)."
+                            partial_error = f"Error en fragmento {i+1} de {total}: {error_detail}"
+                            print(f"ERROR en fragmento {i+1}: {error_detail}")
+                            break
+                
+                if not success:
                     break
             
             # 4. Unir

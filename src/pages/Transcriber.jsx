@@ -136,7 +136,10 @@ export default function Transcriber() {
               if (num === event.chunk) return { ...s, status: "in-progress" };
               return s;
             });
-            return { ...t, subtasks };
+            return { ...t, subtasks, description: "Enviando cada parte al modelo Whisper para su transcripción." };
+          }
+          if (event.status === 'retrying' && t.id === "2") {
+            return { ...t, description: `⚠️ ${event.message}` };
           }
           if (event.status === 'joining' || event.status === 'joining_buffer') {
             if (t.id === "2") {
