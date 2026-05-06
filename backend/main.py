@@ -95,10 +95,57 @@ if dist_path and os.path.exists(dist_path):
 else:
     print(f"ERROR CRÍTICO: No se encontró una carpeta 'dist' válida en: {possible_paths}")
 
+import time
+import math
+
+class KeyPool:
+    def __init__(self, keys_data: list):
+        # keys_data es una lista de dicts: {"alias": str, "key": str}
+        self.keys = keys_data
+        self.current_index = 0
+        self.cooldowns = {} # alias -> timestamp hasta el que está bloqueada
+        
+    def get_current_key(self):
+        if not self.keys:
+            return None, None
+        key_info = self.keys[self.current_index]
+        return key_info.get("key"), key_info.get("alias")
+    
+    def rotate(self):
+        if len(self.keys) <= 1:
+            return False
+        self.current_index = (self.current_index + 1) % len(self.keys)
+        return True
+
+    def mark_cooldown(self, alias, seconds):
+        self.cooldowns[alias] = time.time() + seconds
+        
+    def get_wait_time(self):
+        """Retorna el tiempo mínimo que debemos esperar hasta que alguna clave se libere."""
+        if not self.cooldowns:
+            return 0
+        now = time.time()
+        remaining = [t - now for t in self.cooldowns.values() if t > now]
+        return min(remaining) if remaining else 0
+
+    def get_next_available_key(self):
+        """Busca la siguiente clave que no esté en cooldown."""
+        start_index = self.current_index
+        while True:
+            key_info = self.keys[self.current_index]
+            alias = key_info.get("alias")
+            if self.cooldowns.get(alias, 0) <= time.time():
+                return key_info.get("key"), alias
+            
+            self.current_index = (self.current_index + 1) % len(self.keys)
+            if self.current_index == start_index:
+                # Dimos la vuelta y todas están en cooldown
+                return None, None
+
 def run_groq_transcription(client, path):
     """
     Función auxiliar para llamar a la API de Groq.
-    Usa el modelo whisper-large-v3-turbo para máxima velocidad.
+    Usa el modelo whisper-large-v3 para máxima precisión.
     """
     with open(path, "rb") as audio_file:
         return client.audio.transcriptions.create(
@@ -110,40 +157,47 @@ def run_groq_transcription(client, path):
 @app.post("/transcribe")
 async def transcribe_audio(
     file: UploadFile = File(...),
-    api_key: str = Form(None)
+    api_key: str = Form(None),
+    api_keys: str = Form(None) # JSON string con el pool de claves
 ):
     """
-    Endpoint principal de transcripción con logs detallados.
+    Endpoint principal de transcripción con rotación de claves y manejo de Rate Limits.
     """
     print(f"\n--- INICIO DE TRANSCRIPCIÓN ---")
-    print(f"DEBUG: Archivo recibido: {file.filename} ({file.content_type})")
     
-    key = api_key or os.getenv("GROQ_API_KEY")
-    if not key:
-        print("ERROR: No se encontró API Key")
-        raise HTTPException(status_code=400, detail="Groq API Key is required")
+    # Preparar el pool de claves
+    pool_data = []
+    if api_keys:
+        try:
+            pool_data = json.loads(api_keys)
+        except:
+            print("ERROR: Fallo al parsear api_keys JSON")
+    
+    if not pool_data and api_key:
+        pool_data = [{"alias": "Clave Activa", "key": api_key}]
+        
+    if not pool_data:
+        # Fallback a env
+        env_key = os.getenv("GROQ_API_KEY")
+        if env_key:
+            pool_data = [{"alias": "Default Env", "key": env_key}]
 
-    client = Groq(api_key=key)
+    if not pool_data:
+        raise HTTPException(status_code=400, detail="Se requiere al menos una Groq API Key")
+
+    pool = KeyPool(pool_data)
 
     async def event_generator():
         temp_dir = tempfile.mkdtemp()
-        print(f"DEBUG: Carpeta temporal creada: {temp_dir}")
         try:
-            # 1. Guardar archivo
             input_path = os.path.join(temp_dir, file.filename or "audio_input")
-            print(f"DEBUG: Guardando archivo en: {input_path}")
             with open(input_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-            print(f"DEBUG: Archivo guardado con éxito. Tamaño: {os.path.getsize(input_path)} bytes")
             
-            # 2. Fraccionar
             yield f"data: {json.dumps({'status': 'splitting', 'message': 'Fraccionando audio...'})}\n\n"
-            print("DEBUG: Iniciando process_and_split...")
             chunk_paths = await asyncio.to_thread(process_and_split, input_path, temp_dir)
             total = len(chunk_paths)
-            print(f"DEBUG: Fraccionamiento completado. Total de partes: {total}")
             
-            # 3. Transcribir
             yield f"data: {json.dumps({'status': 'transcribing', 'total': total, 'current': 0, 'message': f'Iniciando transcripción de {total} partes...'})}\n\n"
             
             buffer_path = os.path.join(temp_dir, "transcription_buffer.txt")
@@ -151,87 +205,90 @@ async def transcribe_audio(
             chunks_completed = 0
 
             for i, path in enumerate(chunk_paths):
-                print(f"DEBUG: Transcribiendo fragmento {i+1}/{total}: {path}")
-                yield f"data: {json.dumps({'status': 'transcribing_chunk', 'chunk': i+1, 'total': total, 'message': f'Transcribiendo fragmento {i+1} de {total}...'})}\n\n"
+                current_chunk_success = False
                 
-                max_retries = 3
-                retry_count = 0
-                success = False
-                
-                while retry_count < max_retries and not success:
+                while not current_chunk_success:
+                    key, alias = pool.get_next_available_key()
+                    
+                    if not key:
+                        # Todas las claves están en cooldown
+                        wait_needed = math.ceil(pool.get_wait_time())
+                        if wait_needed > 0:
+                            print(f"DEBUG: Todas las claves limitadas. Esperando {wait_needed}s...")
+                            yield f"data: {json.dumps({'status': 'waiting_limit', 'chunk': i+1, 'wait': wait_needed, 'message': f'Límite global alcanzado. Esperando {wait_needed}s para continuar...'})}\n\n"
+                            await asyncio.sleep(wait_needed)
+                            continue # Reintentar obtener clave
+                        else:
+                            # Caso raro donde get_wait_time dice 0 pero get_next_available_key no devuelve nada
+                            await asyncio.sleep(1)
+                            continue
+
+                    print(f"DEBUG: Transcribiendo fragmento {i+1}/{total} con clave: {alias}")
+                    yield f"data: {json.dumps({'status': 'transcribing_chunk', 'chunk': i+1, 'total': total, 'key_alias': alias, 'message': f'Transcribiendo parte {i+1} con clave {alias}...'})}\n\n"
+                    
+                    client = Groq(api_key=key)
                     try:
                         transcription = await asyncio.to_thread(run_groq_transcription, client, path)
-                        # Escribir inmediatamente al buffer (disco) en lugar de solo RAM
                         with open(buffer_path, "a", encoding="utf-8") as f:
                             f.write(transcription + " ")
                         
                         chunks_completed += 1
-                        success = True
-                        print(f"DEBUG: Fragmento {i+1} completado (intento {retry_count + 1}).")
-                    except Exception as chunk_err:
-                        retry_count += 1
-                        error_detail = str(chunk_err)
-                        is_rate_limit = "rate_limit_exceeded" in error_detail.lower() or "429" in error_detail
+                        current_chunk_success = True
+                    except Exception as e:
+                        error_detail = str(e).lower()
+                        is_rate_limit = "429" in error_detail or "rate_limit" in error_detail
                         
-                        if is_rate_limit and retry_count < max_retries:
-                            wait_time = 5 if retry_count == 1 else 15
-                            print(f"DEBUG: Rate limit en fragmento {i+1}. Reintentando en {wait_time}s... (Intento {retry_count}/{max_retries})")
-                            yield f"data: {json.dumps({'status': 'retrying', 'chunk': i+1, 'attempt': retry_count, 'max_attempts': max_retries, 'wait': wait_time, 'message': f'Límite alcanzado. Reintentando fragmento {i+1} en {wait_time}s...'})}\n\n"
-                            await asyncio.sleep(wait_time)
+                        if is_rate_limit:
+                            # Intentar extraer retry-after
+                            wait_time = 10 # Default
+                            try:
+                                # Groq client suele poner los headers en el objeto de excepción si es RateLimitError
+                                if hasattr(e, 'response') and 'retry-after' in e.response.headers:
+                                    wait_time = int(e.response.headers['retry-after'])
+                            except:
+                                pass
+                            
+                            print(f"WARNING: Límite alcanzado en clave {alias}. Bloqueando por {wait_time}s.")
+                            pool.mark_cooldown(alias, wait_time)
+                            
+                            if len(pool.keys) > 1:
+                                yield f"data: {json.dumps({'status': 'rotating_key', 'chunk': i+1, 'old_key': alias, 'message': f'Límite en {alias}. Rotando clave...'})}\n\n"
+                                pool.rotate()
+                            else:
+                                # Si solo hay una clave, tenemos que esperar sí o sí
+                                yield f"data: {json.dumps({'status': 'retrying', 'chunk': i+1, 'wait': wait_time, 'message': f'Límite alcanzado. Reintentando en {wait_time}s...'})}\n\n"
+                                await asyncio.sleep(wait_time)
                         else:
-                            # Si no es rate limit o agotamos reintentos
-                            if is_rate_limit:
-                                error_detail = "Límite de la API de Groq alcanzado (se agotaron los reintentos)."
-                            partial_error = f"Error en fragmento {i+1} de {total}: {error_detail}"
-                            print(f"ERROR en fragmento {i+1}: {error_detail}")
+                            # Error no relacionado con rate limit (ej. archivo corrupto, red)
+                            partial_error = f"Error en fragmento {i+1}: {str(e)}"
+                            print(f"ERROR FATAL en fragmento {i+1}: {str(e)}")
                             break
                 
-                if not success:
+                if partial_error:
                     break
             
-            # 4. Unir
-            print("DEBUG: Uniendo transcripciones finales desde buffer...")
+            # Unir y finalizar
             yield f"data: {json.dumps({'status': 'joining_buffer', 'message': 'Leyendo memoria temporal...'})}\n\n"
-            
             joined = ""
             if os.path.exists(buffer_path):
                 with open(buffer_path, "r", encoding="utf-8") as f:
                     joined = f.read().strip()
-            print(f"DEBUG: Buffer leído. Longitud: {len(joined)} caracteres.")
 
-            yield f"data: {json.dumps({'status': 'joining_processing', 'message': 'Normalizando texto...'})}\n\n"
             if partial_error:
-                if joined.strip():
-                    final_text = joined + f"\n\n---\n*(Transcripción parcial lograda hasta el fragmento {chunks_completed} de {total}. Ups, hubo un error y no pudimos continuar. Error: {partial_error})*"
-                else:
-                    final_text = f"*(No se pudo transcribir ningún fragmento. Ups, hubo un error desde el inicio. Error: {partial_error})*"
+                final_text = joined + f"\n\n---\n*(Transcripción parcial. Error: {partial_error})*"
             else:
                 final_text = joined
             
-            yield f"data: {json.dumps({'status': 'joining_finalizing', 'message': 'Preparando respuesta final...'})}\n\n"
-            print("DEBUG: Respuesta final preparada.")
-            
-            # 5. Completar
-            print(f"DEBUG: Procesamiento finalizado. Tamaño total: {len(final_text)} caracteres.")
-            yield f"data: {json.dumps({'status': 'completed', 'text': final_text, 'message': 'Transcripción finalizada.' if not partial_error else 'Transcripción parcial (ver notas al final).'})}\n\n"
+            yield f"data: {json.dumps({'status': 'completed', 'text': final_text, 'message': 'Transcripción finalizada.'})}\n\n"
         
         except Exception as e:
-            import traceback
-            error_trace = traceback.format_exc()
-            print(f"ERROR CRÍTICO: {str(e)}")
-            print(error_trace)
-            
-            error_msg = str(e)
-            if "rate_limit_exceeded" in error_msg.lower() or "429" in error_msg:
-                error_msg = "Límite de transcripciones alcanzado (Groq API)."
-            
-            yield f"data: {json.dumps({'status': 'error', 'detail': error_msg, 'trace': error_trace})}\n\n"
+            yield f"data: {json.dumps({'status': 'error', 'detail': str(e)})}\n\n"
         finally:
-            print(f"DEBUG: Limpiando carpeta temporal: {temp_dir}")
             shutil.rmtree(temp_dir, ignore_errors=True)
             print("--- FIN DE TRANSCRIPCIÓN ---\n")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 @app.post("/save_md")
 async def save_md(data: dict):

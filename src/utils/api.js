@@ -1,10 +1,15 @@
 const API_BASE_URL = 'http://127.0.0.1:8000';
 
-export async function transcribeAudioStream(file, apiKey, onProgress) {
+export async function transcribeAudioStream(file, apiKeys, onProgress) {
   const formData = new FormData();
   formData.append('file', file);
-  if (apiKey) {
-    formData.append('api_key', apiKey);
+  
+  if (Array.isArray(apiKeys) && apiKeys.length > 0) {
+    // Enviamos el pool completo como JSON string
+    formData.append('api_keys', JSON.stringify(apiKeys));
+    // También enviamos la activa por compatibilidad si es necesario
+    const active = apiKeys.find(k => k.active);
+    if (active) formData.append('api_key', active.key);
   }
 
   const response = await fetch(`${API_BASE_URL}/transcribe`, {

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion'
 import { Upload, FileAudio, X, Copy, Download, Save, Loader2, AlertCircle, Trash2, ChevronRight, FileText, Check, CheckCircle2, Circle, CircleAlert, CircleDotDashed, CircleX, FolderDown } from 'lucide-react'
 import { transcribeAudioStream, saveToDesktop } from '../utils/api'
-import { getActiveApiKey, getTranscriptions, addTranscription, deleteTranscription } from '../utils/preferences'
+import { getActiveApiKey, getApiKeys, getTranscriptions, addTranscription, deleteTranscription } from '../utils/preferences'
 import { useLocation } from 'react-router-dom'
 
 export default function Transcriber() {
@@ -108,14 +108,14 @@ export default function Transcriber() {
     setExpandedTasks(["1", "2", "3"]);
 
     try {
-      const apiKey = getActiveApiKey()
-      if (!apiKey) {
-        throw new Error('No hay API Key activa. Por favor, configura una en la pestaña de Configuración.')
+      const allKeys = getApiKeys()
+      if (allKeys.length === 0) {
+        throw new Error('No hay API Keys configuradas. Por favor, agrega al menos una en la pestaña de Configuración.')
       }
 
       const fileToUpload = file instanceof File ? file : new File([file], fileName || 'audio.wav', { type: file.type || 'audio/wav' })
 
-      await transcribeAudioStream(fileToUpload, apiKey, (event) => {
+      await transcribeAudioStream(fileToUpload, allKeys, (event) => {
         setTasks(prev => prev.map(t => {
           if (event.status === 'splitting' && t.id === "1") return { ...t, status: "in-progress" };
           if (event.status === 'transcribing') {
@@ -136,7 +136,13 @@ export default function Transcriber() {
               if (num === event.chunk) return { ...s, status: "in-progress" };
               return s;
             });
-            return { ...t, subtasks, description: "Enviando cada parte al modelo Whisper para su transcripción." };
+            return { ...t, subtasks, description: `Procesando con clave: ${event.key_alias || '...'}` };
+          }
+          if (event.status === 'rotating_key' && t.id === "2") {
+            return { ...t, description: `🔄 ${event.message}` };
+          }
+          if (event.status === 'waiting_limit' && t.id === "2") {
+            return { ...t, description: `⏳ ${event.message}` };
           }
           if (event.status === 'retrying' && t.id === "2") {
             return { ...t, description: `⚠️ ${event.message}` };
