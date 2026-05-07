@@ -136,7 +136,7 @@ Después de guardar, aparece un reproductor inline para escuchar la grabación r
 | `error` | Mensaje de error con opción de reintentar |
 
 **Resultado visible:**
-- Área de texto (read-only o editable, TBD) con la transcripción completa.
+- Área de texto con la transcripción completa, **formateada automáticamente en párrafos** basados en silencios fonéticos (>1.5s).
 - Botones de acción sobre el resultado: `Copiar`, `Guardar en historial`, `Descargar .md`, `Descartar`.
 
 **Guardar en historial:**
@@ -183,9 +183,9 @@ El archivo `.md` descargado debe tener la siguiente estructura:
 
 ### 1. Claves API de Groq
 
-- **Listado de API Keys** registradas: cada una muestra un alias (nombre) y los últimos 4 caracteres de la clave (resto enmascarado).
-- Acciones por clave: `Seleccionar como activa`, `Eliminar` (esta última mediante modal de confirmación).
-- Indicador visual de cuál es la clave activa actualmente (cual se esta usando)
+- **Pool de API Keys:** Permite registrar múltiples claves de Groq. El sistema rotará automáticamente entre ellas ante errores de Rate Limit (429).
+- Indicador visual de cuál es la clave activa o en uso actual.
+- Manejo inteligente de `retry-after`: si una clave se bloquea, el sistema espera el tiempo exacto antes de reintentar o rotar.
 - **Formulario para agregar nueva clave:**
   - Campo: Alias (nombre descriptivo, ej. "Personal", "Trabajo").
   - Campo: API Key (input tipo password).
@@ -216,9 +216,8 @@ El archivo `.md` descargado debe tener la siguiente estructura:
 ## Manejo de Errores
 
 - Sin micrófono disponible: mensaje claro + instrucciones para habilitar permisos.
-- Error de API (Groq): si el error ocurre durante el procesamiento de un fragmento, se preserva el texto transcrito hasta ese punto y se muestra al final un mensaje indicando el fragmento en el que se detuvo y el error específico (ej. rate limit, timeout). Si el error ocurre en el primer fragmento (sin texto previo), se muestra un mensaje explicativo completo.
-- Sin API Key configurada: bloquear el botón de transcribir + aviso con link a `/configuracion`.
-- Archivo inválido: mensaje de error específico en la zona de carga.
+- Error de API (Groq): si el error ocurre durante el procesamiento de un fragmento, se preserva el texto transcrito hasta ese punto y se muestra al final un mensaje indicando el fragmento en el que se detuvo y el error específico. El sistema reintenta automáticamente con otras claves disponibles si existen.
+- Robustez de datos: El ensamblado de fragmentos maneja dinámicamente las respuestas de la API (soporta tanto objetos como diccionarios en los segmentos).
 
 ---
 

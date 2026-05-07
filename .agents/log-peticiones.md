@@ -62,3 +62,9 @@ final) al proceso de ensamblado tanto en el backend (main.py) como en el fronten
 
 - **Descripción**: Implementación de párrafos automáticos inteligentes basados en silencios fonéticos. Se cambió el formato de respuesta a `verbose_json` y se desarrolló una lógica de ensamblado que calcula el silencio entre segmentos (incluso entre fragmentos de 10 minutos). Se estableció un umbral de 1.5 segundos para la creación de nuevos párrafos (`\n\n`).
 - **Motivo**: Mejorar la legibilidad de las transcripciones largas, evitando bloques de texto densos y reflejando el ritmo natural del hablante sin los costos ni riesgos de modificación de palabras de un LLM.
+
+- **Descripción**: Corrección de error de tipos en el pipeline de transcripción (`'dict' object has no attribute 'start'`). Se implementó un acceso robusto a los segmentos de Groq que detecta si la respuesta viene como diccionario u objeto. Se generó un nuevo ejecutable con la corrección.
+- **Motivo**: Resolver el fallo que impedía completar las transcripciones cuando la API de Groq devolvía datos en formato diccionario, asegurando la estabilidad del sistema de párrafos.
+
+- **Descripción**: Generación del instalador final (`Instalar_MIKIT_v1.0.exe`) y actualización de documentación maestra. Se actualizaron `Especificaciones.md` y `reglamento-general.md` para incluir el sistema de KeyPool, párrafos inteligentes y manejo de errores robusto.
+- **Motivo**: Entregar el producto final empaquetado y asegurar que las reglas del proyecto reflejen las últimas innovaciones técnicas implementadas.

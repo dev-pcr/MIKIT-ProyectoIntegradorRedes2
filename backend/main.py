@@ -239,8 +239,13 @@ async def transcribe_audio(
                         # Procesar los segmentos del JSON detallado
                         with open(buffer_path, "a", encoding="utf-8") as f:
                             for segment in transcription.segments:
-                                start_global = accumulated_time + segment.start
-                                end_global = accumulated_time + segment.end
+                                # Acceso robusto compatible con dicts u objetos
+                                s_start = segment['start'] if isinstance(segment, dict) else segment.start
+                                s_end = segment['end'] if isinstance(segment, dict) else segment.end
+                                s_text = segment['text'] if isinstance(segment, dict) else segment.text
+                                
+                                start_global = accumulated_time + s_start
+                                end_global = accumulated_time + s_end
                                 
                                 # Si hay un silencio mayor al umbral, insertamos párrafo
                                 if last_end_time > 0:
@@ -248,7 +253,7 @@ async def transcribe_audio(
                                     if silence > paragraph_threshold:
                                         f.write("\n\n")
                                 
-                                f.write(segment.text)
+                                f.write(s_text)
                                 last_end_time = end_global
                         
                         chunks_completed += 1
