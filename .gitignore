@@ -31,7 +31,5 @@ Thumbs.db
 .DS_Store
 
 # Agent state
-.agents/SKILL/
-.agents/skills/
-.agents/rules/
+.agents/
 skills-lock.json
