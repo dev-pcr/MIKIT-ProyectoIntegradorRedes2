@@ -6,6 +6,14 @@ Funciona como aplicación web (PWA) y como app de escritorio para Windows.
 
 ---
 
+## Software libre y donaciones
+
+**MIKIT es software libre y gratuito**, distribuido bajo la licencia **GNU GPL v3** (ver [`LICENSE`](LICENSE)). Cualquiera puede descargarlo, usarlo, estudiarlo, modificarlo y compartirlo; cualquier versión derivada también debe ser libre. El desarrollo es artesanal y lleva tiempo, así que si MIKIT te resulta útil, cualquier aporte es bienvenido.
+
+Podés donar a través de Mercado Pago al alias **MP.PAGAR**, a nombre de **Pablo Nicolas Celaya Rios**. ¡Gracias por apoyar el proyecto!
+
+---
+
 ## Características
 
 - **Grabadora** con visualizador en tiempo real, historial y plantillas de nombres.
@@ -119,12 +127,5 @@ Las transcripciones (`.md`) y grabaciones (`.mp3`) se exportan al **Escritorio**
 
 ## Documentación
 
+- [`MANUAL.md`](MANUAL.md) — manual de usuario completo, pantalla por pantalla.
 - [`Especificaciones.md`](Especificaciones.md) — especificaciones técnicas y funcionales del sistema.
-
----
-
-## Software libre y donaciones
-
-**MIKIT es software libre y gratuito**, distribuido bajo la licencia **GNU GPL v3** (ver [`LICENSE`](LICENSE)). Cualquiera puede descargarlo, usarlo, estudiarlo, modificarlo y compartirlo; cualquier versión derivada también debe ser libre. El desarrollo es artesanal y lleva tiempo, así que si MIKIT te resulta útil, cualquier aporte es bienvenido.
-
-Podés donar a través de Mercado Pago al alias **MP.PAGAR**, a nombre de **Pablo Nicolas Celaya Rios**. ¡Gracias por apoyar el proyecto!
