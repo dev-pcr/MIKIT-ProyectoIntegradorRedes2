@@ -32,6 +32,20 @@ from fastapi.responses import FileResponse
 import os
 from backend.utils.audio import process_and_split
 
+def get_desktop_path():
+    """Resuelve la ruta real del Escritorio del usuario (soporta redirección a OneDrive)."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+            # CSIDL_DESKTOPDIRECTORY = 0x0010: carpeta real del Escritorio
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 0x0010, None, 0, buf) == 0:
+                return buf.value
+        except Exception:
+            pass
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
 # Cargar variables de entorno (API Keys, etc.)
 load_dotenv()
 
@@ -331,7 +345,7 @@ async def save_md(data: dict):
         safe_title = "".join([c for c in title if c.isalnum() or c in (' ', '-', '_')]).strip()
         
         # Determinar la ruta base
-        desktop_path = r"C:\Users\pablo\OneDrive\Desktop"
+        desktop_path = get_desktop_path()
         if folder:
             safe_folder = "".join([c for c in folder if c.isalnum() or c in (' ', '-', '_')]).strip()
             base_dir = os.path.join(desktop_path, safe_folder)
@@ -384,7 +398,7 @@ async def save_audio(
         safe_title = "".join([c for c in title if c.isalnum() or c in (' ', '-', '_')]).strip()
         
         # 4. Determinar carpeta de destino
-        desktop_path = r"C:\Users\pablo\OneDrive\Desktop"
+        desktop_path = get_desktop_path()
         if folder:
             safe_folder = "".join([c for c in folder if c.isalnum() or c in (' ', '-', '_')]).strip()
             base_dir = os.path.join(desktop_path, safe_folder)
