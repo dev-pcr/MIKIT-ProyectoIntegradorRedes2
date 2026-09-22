@@ -1,6 +1,10 @@
 import sys
 import os
 
+# Permitir ejecutar como `python backend/main.py` desde la raíz del proyecto
+# o como módulo con `python -m backend.main`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # Determinar si estamos corriendo como un ejecutable (PyInstaller) o como script
 if getattr(sys, 'frozen', False):
     # Si es ejecutable, la ruta base es la carpeta temporal de extracción
