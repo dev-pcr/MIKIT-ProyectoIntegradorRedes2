@@ -254,7 +254,9 @@ async def transcribe_audio(
             buffer_path = os.path.join(temp_dir, "transcription_buffer.txt")
             partial_error = None
             chunks_completed = 0
-            
+
+            global_segments = []  # Fragmentos sincronizados para karaoke (texto + start/end globales)
+
             accumulated_time = 0.0 # Offset global en segundos
             last_end_time = 0.0    # Marca de tiempo global del último segmento
             paragraph_threshold = 1.5 # Segundos de silencio para nuevo párrafo
@@ -297,6 +299,13 @@ async def transcribe_audio(
                                 
                                 start_global = accumulated_time + s_start
                                 end_global = accumulated_time + s_end
+                                
+                                # Acumular fragmento para karaoke (con timestamps globales)
+                                global_segments.append({
+                                    "start": round(start_global, 2),
+                                    "end": round(end_global, 2),
+                                    "text": s_text.strip()
+                                })
                                 
                                 # Si hay un silencio mayor al umbral, insertamos párrafo
                                 if last_end_time > 0:
@@ -357,7 +366,7 @@ async def transcribe_audio(
             else:
                 final_text = joined
             
-            yield f"data: {json.dumps({'status': 'completed', 'text': final_text, 'message': 'Transcripción finalizada.'})}\n\n"
+            yield f"data: {json.dumps({'status': 'completed', 'text': final_text, 'segments': global_segments, 'message': 'Transcripción finalizada.'})}\n\n"
         
         except Exception as e:
             yield f"data: {json.dumps({'status': 'error', 'detail': str(e)})}\n\n"

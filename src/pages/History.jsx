@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Play, Pause, Volume2, FastForward, RotateCcw, RotateCw, FileText, Edit2, Check, X, Copy, Save, Trash2, AlertCircle, FolderDown, Loader2, ChevronRight } from 'lucide-react'
-import { getAllRecordings, deleteRecording, updateRecording } from '../utils/storage'
+import { Play, Pause, FastForward, RotateCcw, RotateCw, FileText, Edit2, Check, X, Copy, Save, Trash2, AlertCircle, FolderDown, Loader2, ChevronRight, ChevronLeft, MicVocal } from 'lucide-react'
+import { getAllRecordings, deleteRecording, updateRecording, getAllKaraokes, deleteKaraoke, updateKaraoke } from '../utils/storage'
 import { getTranscriptions, deleteTranscription, updateTranscription } from '../utils/preferences'
 import { saveAudioToDesktop, saveToDesktop } from '../utils/api'
 import { useNavigate } from 'react-router-dom'
 
 const formatTime = (seconds) => {
+  if (typeof seconds !== 'number' || isNaN(seconds)) return '00:00'
   const hrs = Math.floor(seconds / 3600)
   const mins = Math.floor((seconds % 3600) / 60)
   const secs = Math.floor(seconds % 60)
@@ -16,21 +17,34 @@ const formatTime = (seconds) => {
 // Clave única por tipo (grabaciones: id numérico; transcripciones: id string)
 const itemKey = (item) => `${item.type}:${item.id}`
 
+const karaokeToMarkdown = (karaoke) => {
+  const dateStr = new Date(karaoke.createdAt).toLocaleString('es-AR')
+  const fragmentList = karaoke.segments
+    .map((s, i) => `- Fragmento ${i + 1} de ${karaoke.segments.length} — ${formatTime(s.start)} – ${formatTime(s.end)}`)
+    .join('\n')
+  const body = karaoke.segments.map((s) => `[${formatTime(s.start)} – ${formatTime(s.end)}] ${s.text.trim()}`).join('\n')
+  return `# ${karaoke.name}\n**Fecha:** ${dateStr}\n\n${fragmentList}\n\n## Texto completo\n\n${body}\n`
+}
+
 export default function History() {
   const [recordings, setRecordings] = useState([])
   const [transcriptions, setTranscriptions] = useState([])
+  const [karaokes, setKaraokes] = useState([])
   const [expandedKey, setExpandedKey] = useState(null)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [itemToDelete, setItemToDelete] = useState(null)
   const [toasts, setToasts] = useState([])
   const [exporting, setExporting] = useState(null) // null | 'audio' | 'text'
 
-  // Player state
-  const [activePlayer, setActivePlayer] = useState(null)
+  // Player state (inline: vive dentro de la tarjeta activa)
+  const [activeKey, setActiveKey] = useState(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playerTime, setPlayerTime] = useState(0)
   const [playbackRate, setPlaybackRate] = useState(1)
   const audioRef = useRef(null)
+
+  // Karaoke panel state
+  const [karaokeIndex, setKaraokeIndex] = useState(0)
 
   // Editing state
   const [editingKey, setEditingKey] = useState(null)
@@ -41,6 +55,7 @@ export default function History() {
   useEffect(() => {
     loadRecordings()
     loadTranscriptions()
+    loadKaraokes()
   }, [])
 
   const loadRecordings = async () => {
@@ -52,6 +67,11 @@ export default function History() {
     setTranscriptions(getTranscriptions().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)))
   }
 
+  const loadKaraokes = async () => {
+    const data = await getAllKaraokes()
+    setKaraokes(data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)))
+  }
+
   const addToast = (message, type = 'success') => {
     const id = Date.now()
     setToasts(prev => [...prev, { id, message, type }])
@@ -60,18 +80,22 @@ export default function History() {
     }, 3000)
   }
 
-  // Lista única: grabaciones + transcripciones ordenadas por fecha
+  // Lista única: grabaciones + transcripciones + karaokes ordenadas por fecha
   const items = [
     ...recordings.map(r => ({ ...r, type: 'audio' })),
     ...transcriptions.map(t => ({ ...t, type: 'text' })),
+    ...karaokes.map(k => ({ ...k, type: 'karaoke' })),
   ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 
-  // Player Controls
+  const activeItem = items.find(i => itemKey(i) === activeKey) || null
+
+  // Player Controls (inline dentro de la tarjeta)
   const openPlayer = (item) => {
     if (audioRef.current) audioRef.current.pause()
-    setActivePlayer(item)
+    setActiveKey(itemKey(item))
     setIsPlaying(false)
     setPlayerTime(0)
+    if (item.type === 'karaoke') setKaraokeIndex(0)
     setTimeout(() => {
       if (audioRef.current) {
         audioRef.current.src = URL.createObjectURL(item.blob)
@@ -84,7 +108,7 @@ export default function History() {
 
   const closePlayer = () => {
     if (audioRef.current) audioRef.current.pause()
-    setActivePlayer(null)
+    setActiveKey(null)
     setIsPlaying(false)
   }
 
@@ -103,7 +127,20 @@ export default function History() {
   }
 
   const handleTimeUpdate = () => {
-    if (audioRef.current) setPlayerTime(audioRef.current.currentTime)
+    if (!audioRef.current) return
+    const t = audioRef.current.currentTime
+    setPlayerTime(t)
+
+    // Sincronizar fragmento del karaoke con el audio en reproducción
+    if (activeItem?.type === 'karaoke' && activeItem.segments?.length && expandedKey === itemKey(activeItem)) {
+      const segs = activeItem.segments
+      const cur = karaokeIndex
+      if (t > segs[cur].end && cur < segs.length - 1) {
+        setKaraokeIndex(cur + 1)
+      } else if (t < segs[cur].start && cur > 0) {
+        setKaraokeIndex(cur - 1)
+      }
+    }
   }
 
   const handleScrub = (e) => {
@@ -124,14 +161,30 @@ export default function History() {
     }
   }
 
+  // Karaoke navigation (funciona con el panel abierto, aunque no se esté reproduciendo)
+  const gotoFragment = (karaoke, idx) => {
+    const segs = karaoke?.segments
+    if (!segs?.length) return
+    const clamped = Math.min(Math.max(idx, 0), segs.length - 1)
+    setKaraokeIndex(clamped)
+    // Si este karaoke está reproduciéndose, saltar el audio al inicio del fragmento
+    if (audioRef.current && activeKey === itemKey(karaoke) && !audioRef.current.paused) {
+      audioRef.current.currentTime = segs[clamped].start
+      setPlayerTime(audioRef.current.currentTime)
+    }
+  }
+
   // Rename
   const handleRename = async (item) => {
     if (editName.trim() === '') return
     if (item.type === 'audio') {
       const { type, ...recording } = item
       await updateRecording({ ...recording, name: editName })
-      if (activePlayer?.id === item.id) setActivePlayer(prev => ({ ...prev, name: editName }))
       await loadRecordings()
+    } else if (item.type === 'karaoke') {
+      const { type, ...karaoke } = item
+      await updateKaraoke({ ...karaoke, name: editName })
+      await loadKaraokes()
     } else {
       updateTranscription(item.id, { name: editName })
       loadTranscriptions()
@@ -148,11 +201,16 @@ export default function History() {
 
   const executeDelete = async () => {
     if (!itemToDelete) return
-    const isAudio = itemToDelete.type === 'audio'
-    if (isAudio) {
+    const { type } = itemToDelete
+    if (type === 'audio') {
       await deleteRecording(itemToDelete.id)
-      if (activePlayer?.id === itemToDelete.id) closePlayer()
+      if (activeKey === itemKey(itemToDelete)) closePlayer()
       await loadRecordings()
+    } else if (type === 'karaoke') {
+      await deleteKaraoke(itemToDelete.id)
+      if (activeKey === itemKey(itemToDelete)) closePlayer()
+      if (expandedKey === itemKey(itemToDelete)) setExpandedKey(null)
+      await loadKaraokes()
     } else {
       deleteTranscription(itemToDelete.id)
       if (expandedKey === itemKey(itemToDelete)) setExpandedKey(null)
@@ -160,7 +218,7 @@ export default function History() {
     }
     setDeleteModalOpen(false)
     setItemToDelete(null)
-    addToast(isAudio ? 'Grabación eliminada' : 'Transcripción eliminada', 'error')
+    addToast(type === 'audio' ? 'Grabación eliminada' : type === 'karaoke' ? 'Karaoke eliminado' : 'Transcripción eliminada', 'error')
   }
 
   // Save single item to Desktop
@@ -178,6 +236,15 @@ export default function History() {
     try {
       await saveToDesktop(item.name, item.text)
       addToast('Archivo guardado en el Escritorio', 'success')
+    } catch (err) {
+      addToast(err.message, 'error')
+    }
+  }
+
+  const handleExportKaraokeMd = async (item) => {
+    try {
+      await saveToDesktop(item.name, karaokeToMarkdown(item))
+      addToast('Karaoke exportado como .md en el Escritorio', 'success')
     } catch (err) {
       addToast(err.message, 'error')
     }
@@ -248,9 +315,161 @@ export default function History() {
     setExporting(null)
   }
 
+  const renderInlinePlayer = (item) => {
+    const isActive = activeKey === itemKey(item)
+    if (!isActive) return null
+    return (
+      <motion.div
+        initial={{ opacity: 0, height: 0 }}
+        animate={{ opacity: 1, height: 'auto' }}
+        className="border-t border-white/5 bg-black/20 mt-4"
+      >
+        <div className="p-4 flex flex-col gap-3">
+          <div className="flex items-center gap-4">
+            <button onClick={() => skipTime(-10)} className="p-2 text-zinc-400 hover:text-white transition-colors" title="-10s">
+              <RotateCcw size={18} />
+            </button>
+            <button onClick={togglePlay} className="w-12 h-12 flex-shrink-0 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform">
+              {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+            </button>
+            <button onClick={() => skipTime(10)} className="p-2 text-zinc-400 hover:text-white transition-colors" title="+10s">
+              <RotateCw size={18} />
+            </button>
+
+            <div className="flex-1 flex flex-col gap-2">
+              <div
+                className="h-2 bg-white/10 rounded-full overflow-hidden cursor-pointer relative"
+                onClick={handleScrub}
+              >
+                <motion.div
+                  className="absolute top-0 left-0 h-full bg-brand-500"
+                  style={{ width: audioRef.current?.duration ? `${(playerTime / audioRef.current.duration) * 100}%` : '0%' }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-zinc-500 font-mono">
+                <span>{formatTime(playerTime)}</span>
+                <span>{item.type === 'audio' ? item.duration : formatTime(item.duration)}</span>
+              </div>
+            </div>
+
+            <button onClick={changePlaybackRate} className="px-3 py-1.5 glass rounded-lg text-xs font-bold text-white hover:bg-white/10 transition-colors flex items-center gap-1">
+              <FastForward size={14} /> {playbackRate}x
+            </button>
+            <button onClick={closePlayer} className="p-2 text-zinc-500 hover:text-white transition-colors" title="Cerrar">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    )
+  }
+
+  const renderKaraokePanel = (item) => {
+    const segs = item.segments || []
+    if (segs.length === 0) return null
+    const idx = karaokeIndex
+    const frag = segs[idx]
+    const isActive = activeKey === itemKey(item)
+
+    return (
+      <motion.div
+        initial={{ height: 0, opacity: 0 }}
+        animate={{ height: 'auto', opacity: 1 }}
+        exit={{ height: 0, opacity: 0 }}
+        className="border-t border-white/5 bg-black/20 mt-4"
+      >
+        <div className="p-6 space-y-5">
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <MicVocal size={18} className="text-fuchsia-400" />
+              <span className="font-bold text-white">Karaoke</span>
+              <span className="text-sm text-zinc-500 font-mono">({idx + 1}/{segs.length})</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={() => handleCopy(frag.text)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Copiar fragmento actual">
+                Copiar frag.
+              </button>
+              <button onClick={() => handleCopy(item.text)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Copiar todo el texto">
+                Copiar todo
+              </button>
+              <button onClick={() => setExpandedKey(null)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Volver a la lista">
+                Historial
+              </button>
+              <button onClick={() => handleExportKaraokeMd(item)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-fuchsia-500/15 text-fuchsia-300 hover:bg-fuchsia-500/25 transition-colors" title="Exportar como .md">
+                Exportar MD
+              </button>
+            </div>
+          </div>
+
+          {/* Fragment box */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => gotoFragment(item, idx - 1)}
+              disabled={idx === 0}
+              className="p-2 rounded-full text-zinc-400 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Fragmento anterior"
+            >
+              <ChevronLeft size={24} />
+            </button>
+
+            <div className="flex-1 rounded-2xl bg-white/5 border border-white/10 p-6 flex flex-col items-center gap-3 text-center">
+              <p className="text-lg text-white font-medium leading-relaxed">{frag.text}</p>
+              <span className="text-sm font-mono text-fuchsia-400">{formatTime(frag.start)} – {formatTime(frag.end)}</span>
+            </div>
+
+            <button
+              onClick={() => gotoFragment(item, idx + 1)}
+              disabled={idx === segs.length - 1}
+              className="p-2 rounded-full text-zinc-400 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Fragmento siguiente"
+            >
+              <ChevronRight size={24} />
+            </button>
+          </div>
+
+          {/* Controls */}
+          <div className="flex flex-col items-center gap-3">
+            <div className="flex items-center gap-4">
+              <button onClick={() => { skipTime(-10); }} className="p-2 text-zinc-400 hover:text-white transition-colors" title="-10s">
+                <RotateCcw size={20} />
+              </button>
+              <button
+                onClick={isActive ? togglePlay : () => openPlayer(item)}
+                className="w-14 h-14 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform"
+                title={isActive && isPlaying ? 'Pausar' : 'Reproducir'}
+              >
+                {isActive && isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
+              </button>
+              <button onClick={() => skipTime(10)} className="p-2 text-zinc-400 hover:text-white transition-colors" title="+10s">
+                <RotateCw size={20} />
+              </button>
+            </div>
+
+            <div className="w-full flex flex-col gap-2">
+              <div
+                className="h-2 bg-white/10 rounded-full overflow-hidden cursor-pointer relative"
+                onClick={handleScrub}
+              >
+                <motion.div
+                  className="absolute top-0 left-0 h-full bg-fuchsia-500"
+                  style={{ width: audioRef.current?.duration ? `${(playerTime / audioRef.current.duration) * 100}%` : '0%' }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-zinc-500 font-mono">
+                <span>{formatTime(playerTime)}</span>
+                <span>{formatTime(item.duration)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-8 relative pb-12">
-      {/* Hidden Audio Element for Player */}
+      {/* Hidden Audio Element for Player (controlado desde la tarjeta activa) */}
       <audio
         ref={audioRef}
         onTimeUpdate={handleTimeUpdate}
@@ -291,11 +510,11 @@ export default function History() {
               </div>
               <div className="text-center space-y-2">
                 <h3 className="text-xl font-bold text-white">
-                  {itemToDelete?.type === 'audio' ? 'Eliminar Grabación' : 'Eliminar Transcripción'}
+                  {itemToDelete?.type === 'audio' ? 'Eliminar Grabación' : itemToDelete?.type === 'karaoke' ? 'Eliminar Karaoke' : 'Eliminar Transcripción'}
                 </h3>
                 <p className="text-sm text-zinc-400">
                   ¿Estás seguro de que quieres eliminar <span className="text-white font-medium">"{itemToDelete?.name}"</span>?
-                  {itemToDelete?.type === 'audio' ? ' Esta acción no se puede deshacer.' : ''}
+                  {itemToDelete?.type !== 'text' ? ' Esta acción no se puede deshacer.' : ''}
                 </p>
               </div>
               <div className="flex gap-3 pt-2">
@@ -318,7 +537,7 @@ export default function History() {
       <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div className="space-y-2">
           <h2 className="text-3xl font-display font-bold text-white">Historial</h2>
-          <p className="text-zinc-500">Tus grabaciones y transcripciones en un solo lugar.</p>
+          <p className="text-zinc-500">Tus grabaciones, transcripciones y karaokes en un solo lugar.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -342,75 +561,22 @@ export default function History() {
         </div>
       </header>
 
-      {/* Active Player */}
-      <AnimatePresence>
-        {activePlayer ? (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="glass-card p-6 border-brand-500/30 flex flex-col gap-4 relative overflow-hidden"
-          >
-            <button onClick={closePlayer} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
-              <X size={20} />
-            </button>
-
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-brand-500/20 flex items-center justify-center text-brand-400">
-                <Volume2 size={24} />
-              </div>
-              <div>
-                <h4 className="font-bold text-lg text-white">{activePlayer.name}</h4>
-                <p className="text-sm text-zinc-400">Reproduciendo ahora</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <button onClick={() => skipTime(-10)} className="p-2 text-zinc-400 hover:text-white transition-colors" title="-10s">
-                <RotateCcw size={18} />
-              </button>
-              <button onClick={togglePlay} className="w-12 h-12 flex-shrink-0 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform">
-                {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
-              </button>
-              <button onClick={() => skipTime(10)} className="p-2 text-zinc-400 hover:text-white transition-colors" title="+10s">
-                <RotateCw size={18} />
-              </button>
-
-              <div className="flex-1 flex flex-col gap-2">
-                <div
-                  className="h-2 bg-white/10 rounded-full overflow-hidden cursor-pointer relative"
-                  onClick={handleScrub}
-                >
-                  <motion.div
-                    className="absolute top-0 left-0 h-full bg-brand-500"
-                    style={{ width: audioRef.current?.duration ? `${(playerTime / audioRef.current.duration) * 100}%` : '0%' }}
-                  />
-                </div>
-                <div className="flex justify-between text-xs text-zinc-500 font-mono">
-                  <span>{formatTime(playerTime)}</span>
-                  <span>{activePlayer.duration}</span>
-                </div>
-              </div>
-
-              <button onClick={changePlaybackRate} className="px-3 py-1.5 glass rounded-lg text-xs font-bold text-white hover:bg-white/10 transition-colors flex items-center gap-1">
-                <FastForward size={14} /> {playbackRate}x
-              </button>
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-
       {/* Unified list */}
       <div className="flex flex-col gap-3">
         {items.length === 0 ? (
           <div className="p-12 text-center text-zinc-500 border border-dashed border-white/10 rounded-3xl">
-            No hay grabaciones ni transcripciones todavía.
+            No hay grabaciones, transcripciones ni karaokes todavía.
           </div>
         ) : (
           items.map((item, index) => {
             const key = itemKey(item)
-            const isAudio = item.type === 'audio'
+            const type = item.type
+            const isAudio = type === 'audio'
+            const isKaraoke = type === 'karaoke'
+            const isText = type === 'text'
             const isExpanded = expandedKey === key
+            const canPlay = isAudio || isKaraoke
+            const badgeClass = isAudio ? 'bg-brand-500/10 text-brand-400' : isKaraoke ? 'bg-fuchsia-500/10 text-fuchsia-400' : 'bg-blue-500/10 text-blue-400'
 
             return (
               <motion.div
@@ -418,21 +584,29 @@ export default function History() {
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: Math.min(index * 0.05, 0.5) }}
-                className="glass-card p-4 group hover:border-brand-500/30 overflow-hidden transition-all duration-300"
+                className={`glass-card p-4 group hover:border-brand-500/30 overflow-hidden transition-all duration-300 ${isExpanded ? 'border-fuchsia-500/30' : ''}`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4 flex-1 min-w-0">
-                    {isAudio ? (
+                    {canPlay ? (
                       <button
-                        onClick={() => openPlayer(item)}
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 ${activePlayer?.id === item.id ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/20' : 'bg-brand-500/10 text-brand-500 hover:bg-brand-500/20'}`}
+                        onClick={() => {
+                          if (isKaraoke) {
+                            setExpandedKey(isExpanded ? null : key)
+                            if (!isExpanded) setKaraokeIndex(0)
+                          }
+                          if (activeKey === key) togglePlay()
+                          else openPlayer(item)
+                        }}
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 ${activeKey === key ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/20' : 'bg-brand-500/10 text-brand-500 hover:bg-brand-500/20'}`}
+                        title={isKaraoke ? (isExpanded ? 'Colapsar' : 'Abrir karaoke') : 'Reproducir'}
                       >
-                        {activePlayer?.id === item.id && isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+                        {activeKey === key && isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
                       </button>
                     ) : (
                       <button
                         onClick={() => setExpandedKey(isExpanded ? null : key)}
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 ${isExpanded ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'}`}
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 ${isExpanded ? 'bg-white/20 text-white' : 'bg-white/10 text-zinc-400 hover:bg-white/20'}`}
                         title={isExpanded ? 'Colapsar' : 'Ver transcripción'}
                       >
                         <ChevronRight size={20} className={`transition-transform duration-300 ${isExpanded ? 'rotate-90' : ''}`} />
@@ -466,10 +640,11 @@ export default function History() {
                             </button>
                           </h4>
                           <p className="text-xs text-zinc-500 flex items-center gap-2 flex-wrap">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${isAudio ? 'bg-brand-500/10 text-brand-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                              {isAudio ? 'Audio' : 'Texto'}
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${badgeClass}`}>
+                              {isAudio ? 'Audio' : isKaraoke ? 'Karaoke' : 'Texto'}
                             </span>
                             {isAudio ? <span>{item.duration} •</span> : null}
+                            {isKaraoke ? <span>{item.segments?.length || 0} fragmentos •</span> : null}
                             <span>{new Date(item.createdAt).toLocaleString()}</span>
                           </p>
                         </>
@@ -491,6 +666,30 @@ export default function History() {
                           onClick={() => handleTranscribe(item)}
                           className="p-2 hover:bg-brand-500/10 rounded-lg text-brand-400 hover:text-brand-300 transition-colors"
                           title="Transcribir"
+                        >
+                          <FileText size={18} />
+                        </button>
+                      </>
+                    ) : isKaraoke ? (
+                      <>
+                        <button
+                          onClick={() => handleCopy(item.text)}
+                          className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors"
+                          title="Copiar todo el texto"
+                        >
+                          <Copy size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleSaveAudio(item)}
+                          className="p-2 hover:bg-brand-500/10 rounded-lg text-brand-500 hover:text-brand-400 transition-colors"
+                          title="Guardar audio en Escritorio (MP3)"
+                        >
+                          <Save size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleExportKaraokeMd(item)}
+                          className="p-2 hover:bg-fuchsia-500/10 rounded-lg text-fuchsia-400 hover:text-fuchsia-300 transition-colors"
+                          title="Exportar karaoke como .md"
                         >
                           <FileText size={18} />
                         </button>
@@ -523,9 +722,17 @@ export default function History() {
                   </div>
                 </div>
 
+                {/* Expanded panels (inline dentro de la tarjeta) */}
+                <AnimatePresence>
+                  {isKaraoke && isExpanded ? renderKaraokePanel(item) : null}
+                </AnimatePresence>
+
+                {/* Inline player para audio en reproducción (el karaoke tiene sus controles en el panel) */}
+                {isAudio ? renderInlinePlayer(item) : null}
+
                 {/* Expanded transcription text */}
                 <AnimatePresence>
-                  {!isAudio && isExpanded ? (
+                  {isText && isExpanded ? (
                     <motion.div
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: 'auto', opacity: 1 }}

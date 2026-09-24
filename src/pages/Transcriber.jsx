@@ -1,9 +1,27 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion'
-import { Upload, FileAudio, X, Copy, Download, Save, Loader2, AlertCircle, Trash2, Check, CheckCircle2, Circle, CircleAlert, CircleDotDashed, CircleX } from 'lucide-react'
+import { Upload, FileAudio, X, Copy, Download, Save, Loader2, AlertCircle, Trash2, Check, CheckCircle2, Circle, CircleAlert, CircleDotDashed, CircleX, MicVocal, Play, Pause, RotateCcw, RotateCw, ChevronLeft, ChevronRight, FastForward, FileText } from 'lucide-react'
 import { transcribeAudioStream, saveToDesktop } from '../utils/api'
 import { getApiKeys, addTranscription } from '../utils/preferences'
+import { saveKaraoke } from '../utils/storage'
 import { useLocation } from 'react-router-dom'
+
+const formatTime = (seconds) => {
+  if (typeof seconds !== 'number' || isNaN(seconds)) return '00:00'
+  const hrs = Math.floor(seconds / 3600)
+  const mins = Math.floor((seconds % 3600) / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${hrs > 0 ? hrs.toString().padStart(2, '0') + ':' : ''}${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+}
+
+const karaokeToMarkdown = (karaoke) => {
+  const dateStr = new Date(karaoke.createdAt).toLocaleString('es-AR')
+  const fragmentList = karaoke.segments
+    .map((s, i) => `- Fragmento ${i + 1} de ${karaoke.segments.length} — ${formatTime(s.start)} – ${formatTime(s.end)}`)
+    .join('\n')
+  const body = karaoke.segments.map((s) => `[${formatTime(s.start)} – ${formatTime(s.end)}] ${s.text.trim()}`).join('\n')
+  return `# ${karaoke.name}\n**Fecha:** ${dateStr}\n\n${fragmentList}\n\n## Texto completo\n\n${body}\n`
+}
 
 export default function Transcriber() {
   const location = useLocation()
@@ -11,12 +29,29 @@ export default function Transcriber() {
   const [fileName, setFileName] = useState(location.state?.fileName || '')
   const [status, setStatus] = useState('idle') // idle, uploading, transcribing, ready
   const [result, setResult] = useState('')
+  const [segments, setSegments] = useState([])
   const [error, setError] = useState(null)
 
   // Saving states
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false)
   const [saveName, setSaveName] = useState('')
   const [toasts, setToasts] = useState([])
+
+  // Karaoke preview state (player + fragmento actual del resultado)
+  const [viewMode, setViewMode] = useState('karaoke') // 'karaoke' | 'text'
+  const [karaokeIndex, setKaraokeIndex] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [playerTime, setPlayerTime] = useState(0)
+  const [playbackRate, setPlaybackRate] = useState(1)
+  const audioRef = useRef(null)
+  const objectUrlRef = useRef(null)
+
+  // Limpiar la URL del objeto audio al desmontar
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+    }
+  }, [])
 
   // Progress UI States
   const [tasks, setTasks] = useState([]);
@@ -145,6 +180,7 @@ export default function Transcriber() {
 
         if (event.status === 'completed') {
           setResult(event.text);
+          setSegments(Array.isArray(event.segments) ? event.segments : []);
           setSaveName(fileName || 'Transcripción Nueva');
           setStatus('ready');
           addToast('Transcripción completada con éxito', 'success');
@@ -184,6 +220,108 @@ export default function Transcriber() {
     })
     setIsSaveModalOpen(false)
     addToast('Transcripción guardada — la encontrás en Historial', 'success')
+  }
+
+  const handleSaveAsKaraoke = async () => {
+    if (!file || segments.length === 0) {
+      addToast('No hay fragmentos sincronizados para guardar como karaoke. Guardá la transcripción normal.', 'error')
+      return
+    }
+    try {
+      const blob = file instanceof File ? file : new Blob([file], { type: file.type || 'audio/webm' })
+      await saveKaraoke(blob, {
+        name: saveName,
+        text: result,
+        segments,
+        duration: segments.length ? segments[segments.length - 1].end : 0
+      })
+      setIsSaveModalOpen(false)
+      addToast('Karaoke guardado — la encontrás en Historial', 'success')
+    } catch (err) {
+      console.error(err)
+      addToast('Error al guardar el karaoke', 'error')
+    }
+  }
+
+  // --- Karaoke preview player (reproduce el audio local ya transcrito) ---
+  const loadPreviewAudio = () => {
+    if (!file) return
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+    const url = URL.createObjectURL(file)
+    objectUrlRef.current = url
+    if (audioRef.current) {
+      audioRef.current.src = url
+      audioRef.current.playbackRate = playbackRate
+    }
+  }
+
+  const togglePreviewPlay = () => {
+    if (!audioRef.current) return
+    if (isPlaying) {
+      audioRef.current.pause()
+      setIsPlaying(false)
+    } else {
+      if (!audioRef.current.src && file) loadPreviewAudio()
+      audioRef.current.play()
+      setIsPlaying(true)
+    }
+  }
+
+  const handlePreviewTimeUpdate = () => {
+    if (!audioRef.current) return
+    const t = audioRef.current.currentTime
+    setPlayerTime(t)
+    // Sincronizar el fragmento actual con la reproducción
+    if (segments.length && t > segments[karaokeIndex].end && karaokeIndex < segments.length - 1) {
+      setKaraokeIndex(karaokeIndex + 1)
+    }
+  }
+
+  const handlePreviewEnded = () => {
+    setIsPlaying(false)
+  }
+
+  const handlePreviewScrub = (e) => {
+    if (!audioRef.current) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const percent = x / rect.width
+    audioRef.current.currentTime = percent * audioRef.current.duration
+    setPlayerTime(audioRef.current.currentTime)
+  }
+
+  const skipPreviewTime = (amount) => {
+    if (!audioRef.current) return
+    const newTime = audioRef.current.currentTime + amount
+    audioRef.current.currentTime = Math.min(Math.max(newTime, 0), audioRef.current.duration)
+    setPlayerTime(audioRef.current.currentTime)
+  }
+
+  const gotoPreviewFragment = (idx) => {
+    if (!segments.length) return
+    const clamped = Math.min(Math.max(idx, 0), segments.length - 1)
+    setKaraokeIndex(clamped)
+    if (audioRef.current && isPlaying) {
+      audioRef.current.currentTime = segments[clamped].start
+      setPlayerTime(audioRef.current.currentTime)
+    }
+  }
+
+  const changePreviewPlaybackRate = () => {
+    const rates = [1, 1.5, 2, 0.5]
+    const nextRate = rates[(rates.indexOf(playbackRate) + 1) % rates.length]
+    setPlaybackRate(nextRate)
+    if (audioRef.current) audioRef.current.playbackRate = nextRate
+  }
+
+  const handleExportKaraokeMd = async () => {
+    try {
+      const karaoke = { name: saveName, segments, createdAt: new Date().toLocaleString('es-AR') }
+      await saveToDesktop(karaoke.name, karaokeToMarkdown(karaoke))
+      addToast('Karaoke exportado como .md en el Escritorio', 'success')
+    } catch (err) {
+      addToast(err.message, 'error')
+    }
   }
 
   const taskVariants = {
@@ -231,7 +369,7 @@ export default function Transcriber() {
         </AnimatePresence>
       </div>
 
-      {/* Save Modal */}
+{/* Save Modal */}
       <AnimatePresence>
         {isSaveModalOpen ? (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
@@ -251,10 +389,26 @@ export default function Transcriber() {
                   autoFocus
                 />
               </div>
-              <div className="flex gap-3">
-                <button onClick={() => setIsSaveModalOpen(false)} className="btn-secondary flex-1">Cancelar</button>
-                <button onClick={handleSaveToHistory} className="btn-primary flex-1">Guardar</button>
-              </div>
+
+              {segments.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="text-sm text-zinc-400">¿Cómo querés guardarlo?</div>
+                  <button onClick={handleSaveToHistory} className="btn-primary flex-1 w-full flex items-center justify-center gap-2">
+                    <Save size={16} /> Guardar transcripción
+                  </button>
+                  <button onClick={handleSaveAsKaraoke} className="btn-secondary flex-1 w-full flex items-center justify-center gap-2">
+                    <MicVocal size={16} /> Guardar como Karaoke ({segments.length} fragmentos)
+                  </button>
+                  <button onClick={() => setIsSaveModalOpen(false)} className="w-full text-sm text-zinc-500 hover:text-white transition-colors">
+                    Cancelar
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-3">
+                  <button onClick={() => setIsSaveModalOpen(false)} className="btn-secondary flex-1">Cancelar</button>
+                  <button onClick={handleSaveToHistory} className="btn-primary flex-1">Guardar</button>
+                </div>
+              )}
             </motion.div>
           </div>
         ) : null}
@@ -485,23 +639,134 @@ export default function Transcriber() {
             animate={{ opacity: 1, y: 0 }}
             className="space-y-6"
           >
+            {/* Audio element para la reproducción del karaoke */}
+            <audio
+              ref={audioRef}
+              onTimeUpdate={handlePreviewTimeUpdate}
+              onEnded={handlePreviewEnded}
+              className="hidden"
+            />
+
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <h3 className="text-xl font-bold text-white">Resultado</h3>
               <div className="flex flex-wrap items-center gap-2">
-                <button onClick={() => handleCopy(result)} className="btn-secondary px-4 py-2 text-sm"><Copy size={16} /> Copiar</button>
-                <button onClick={() => handleSaveToDesktop(saveName, result)} className="btn-primary px-4 py-2 text-sm"><Save size={16} /> Guardar en Escritorio</button>
-                <button onClick={() => setIsSaveModalOpen(true)} className="btn-secondary px-4 py-2 text-sm"><Download size={16} /> Guardar en Historial</button>
+                {segments.length > 0 ? (
+                  <button
+                    onClick={() => setViewMode(viewMode === 'karaoke' ? 'text' : 'karaoke')}
+                    className="btn-secondary px-4 py-2 text-sm"
+                    title={viewMode === 'karaoke' ? 'Ver el texto completo editable' : 'Volver a la vista karaoke'}
+                  >
+                    {viewMode === 'karaoke' ? <FileText size={16} /> : <MicVocal size={16} />}
+                    {viewMode === 'karaoke' ? 'Ver texto' : 'Ver karaoke'}
+                  </button>
+                ) : null}
+                <button onClick={() => handleCopy(viewMode === 'karaoke' && segments.length ? segments.map(s => s.text.trim()).join(' ') : result)} className="btn-secondary px-4 py-2 text-sm"><Copy size={16} /> Copiar</button>
+                <button onClick={() => handleSaveToDesktop(saveName, result)} className="btn-secondary px-4 py-2 text-sm"><Save size={16} /> Guardar en Escritorio</button>
+                <button onClick={() => setIsSaveModalOpen(true)} className="btn-primary px-4 py-2 text-sm"><Download size={16} /> Guardar</button>
               </div>
             </div>
-            <div className="glass-card p-8 min-h-[400px] prose prose-invert max-w-none prose-brand">
-              <textarea
-                className="w-full min-h-[400px] bg-transparent resize-none outline-none font-sans text-zinc-300 leading-relaxed"
-                value={result}
-                onChange={(e) => setResult(e.target.value)}
-              />
-            </div>
+
+            {segments.length > 0 && viewMode === 'karaoke' ? (
+              /* Vista karaoke: panel con fragmentos sincronizados */
+              <div className="glass-card border-fuchsia-500/20 overflow-hidden">
+                <div className="p-6 space-y-5">
+                  {/* Header */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <MicVocal size={18} className="text-fuchsia-400" />
+                      <span className="font-bold text-white">Karaoke</span>
+                      <span className="text-sm text-zinc-500 font-mono">({karaokeIndex + 1}/{segments.length})</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button onClick={() => handleCopy(segments[karaokeIndex].text.trim())} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Copiar fragmento actual">
+                        Copiar frag.
+                      </button>
+                      <button onClick={() => handleCopy(result)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Copiar todo el texto">
+                        Copiar todo
+                      </button>
+                      <button onClick={handleExportKaraokeMd} className="px-3 py-1.5 rounded-full text-xs font-bold bg-fuchsia-500/15 text-fuchsia-300 hover:bg-fuchsia-500/25 transition-colors" title="Exportar como .md">
+                        Exportar MD
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Fragment box */}
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => gotoPreviewFragment(karaokeIndex - 1)}
+                      disabled={karaokeIndex === 0}
+                      className="p-2 rounded-full text-zinc-400 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="Fragmento anterior"
+                    >
+                      <ChevronLeft size={24} />
+                    </button>
+
+                    <div className="flex-1 rounded-2xl bg-white/5 border border-white/10 p-6 flex flex-col items-center gap-3 text-center">
+                      <p className="text-lg text-white font-medium leading-relaxed">{segments[karaokeIndex]?.text}</p>
+                      <span className="text-sm font-mono text-fuchsia-400">{formatTime(segments[karaokeIndex]?.start)} – {formatTime(segments[karaokeIndex]?.end)}</span>
+                    </div>
+
+                    <button
+                      onClick={() => gotoPreviewFragment(karaokeIndex + 1)}
+                      disabled={karaokeIndex === segments.length - 1}
+                      className="p-2 rounded-full text-zinc-400 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="Fragmento siguiente"
+                    >
+                      <ChevronRight size={24} />
+                    </button>
+                  </div>
+
+                  {/* Controls */}
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="flex items-center gap-4">
+                      <button onClick={() => skipPreviewTime(-10)} className="p-2 text-zinc-400 hover:text-white transition-colors" title="-10s">
+                        <RotateCcw size={20} />
+                      </button>
+                      <button
+                        onClick={togglePreviewPlay}
+                        className="w-14 h-14 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform"
+                        title={isPlaying ? 'Pausar' : 'Reproducir'}
+                      >
+                        {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
+                      </button>
+                      <button onClick={() => skipPreviewTime(10)} className="p-2 text-zinc-400 hover:text-white transition-colors" title="+10s">
+                        <RotateCw size={20} />
+                      </button>
+                      <button onClick={changePreviewPlaybackRate} className="px-3 py-1.5 glass rounded-lg text-xs font-bold text-white hover:bg-white/10 transition-colors flex items-center gap-1">
+                        <FastForward size={14} /> {playbackRate}x
+                      </button>
+                    </div>
+
+                    <div className="w-full flex flex-col gap-2">
+                      <div
+                        className="h-2 bg-white/10 rounded-full overflow-hidden cursor-pointer relative"
+                        onClick={handlePreviewScrub}
+                      >
+                        <motion.div
+                          className="absolute top-0 left-0 h-full bg-fuchsia-500"
+                          style={{ width: audioRef.current?.duration ? `${(playerTime / audioRef.current.duration) * 100}%` : '0%' }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-xs text-zinc-500 font-mono">
+                        <span>{formatTime(playerTime)}</span>
+                        <span>{formatTime(segments[segments.length - 1].end)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="glass-card p-8 min-h-[400px] prose prose-invert max-w-none prose-brand">
+                <textarea
+                  className="w-full min-h-[400px] bg-transparent resize-none outline-none font-sans text-zinc-300 leading-relaxed"
+                  value={result}
+                  onChange={(e) => setResult(e.target.value)}
+                />
+              </div>
+            )}
+
             <button
-              onClick={() => { setFile(null); setStatus('idle'); }}
+              onClick={() => { setFile(null); setStatus('idle'); setSegments([]); setViewMode('karaoke'); setKaraokeIndex(0); setIsPlaying(false); setPlayerTime(0); }}
               className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors"
             >
               <Upload size={16} /> Subir otro archivo
