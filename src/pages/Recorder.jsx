@@ -351,46 +351,6 @@ export default function Recorder() {
         ) : null}
       </AnimatePresence>
 
-      {/* Selector de micrófono: fuera de la consola de grabación, arriba a la derecha
-          (el dispositivo al que se accede — ej. mic Bluetooth de solapa) */}
-      <div className="flex justify-start -mt-2">
-        <div className="relative text-left w-80 max-w-full">
-          <label className="text-xs text-zinc-500 uppercase tracking-wider flex items-center gap-2 mb-2">
-            <Mic size={12} className={selectedDeviceId ? 'text-green-400' : 'text-zinc-500'} />
-            Selecciona el micrófono
-          </label>
-          <div className="relative">
-            <select
-              value={selectedDeviceId}
-              onChange={(e) => setSelectedDeviceId(e.target.value)}
-              disabled={status !== 'inactivo' || audioDevices.length === 0}
-              className={`w-full bg-transparent border rounded-xl px-4 py-2.5 pr-10 text-sm focus:outline-none transition-all appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                selectedDeviceId
-                  ? 'border-green-500/60 text-green-400 focus:border-green-500'
-                  : 'border-white/10 text-white/60 focus:border-brand-500'
-              }`}
-              title={audioDevices.length === 0 ? 'No se detectaron micrófonos. Conectá tu dispositivo y recargá la página.' : undefined}
-            >
-              {audioDevices.length === 0 ? (
-                <option className="bg-zinc-900">Sin micrófonos detectados</option>
-              ) : (
-                <>
-                  <option value="" className="bg-zinc-900">Sin seleccionar</option>
-                  {audioDevices.map(device => (
-                    <option key={device.deviceId} value={device.deviceId} className="bg-zinc-900">
-                      {device.label || `Micrófono (${device.deviceId.slice(0, 8)}...)`}
-                    </option>
-                  ))}
-                </>
-              )}
-            </select>
-            <div className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${selectedDeviceId ? 'text-green-400' : 'text-zinc-500'}`}>
-              <ChevronDown size={16} />
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* Recording Console */}
       <div className="glass-card p-12 flex flex-col items-center justify-center gap-12 relative overflow-hidden">
         <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full blur-[100px] transition-all duration-700 ${status === 'grabando' ? 'bg-red-500/20 scale-150' : 'bg-brand-500/10'}`} />
@@ -465,6 +425,46 @@ export default function Recorder() {
               </motion.button>
             ) : null}
           </AnimatePresence>
+        </div>
+      </div>
+
+      {/* Selector de micrófono: debajo de la consola de grabación
+          (el dispositivo al que se accede — ej. mic Bluetooth de solapa) */}
+      <div className="flex justify-start">
+        <div className="relative text-left w-80 max-w-full">
+          <label className="text-xs text-zinc-500 uppercase tracking-wider flex items-center gap-2 mb-2">
+            <Mic size={12} className={selectedDeviceId ? 'text-green-400' : 'text-zinc-500'} />
+            Selecciona el micrófono
+          </label>
+          <div className="relative">
+            <select
+              value={selectedDeviceId}
+              onChange={(e) => setSelectedDeviceId(e.target.value)}
+              disabled={status !== 'inactivo' || audioDevices.length === 0}
+              className={`w-full bg-transparent border rounded-xl px-4 py-2.5 pr-10 text-sm focus:outline-none transition-all appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                selectedDeviceId
+                  ? 'border-green-500/60 text-green-400 focus:border-green-500'
+                  : 'border-white/10 text-white/60 focus:border-brand-500'
+              }`}
+              title={audioDevices.length === 0 ? 'No se detectaron micrófonos. Conectá tu dispositivo y recargá la página.' : undefined}
+            >
+              {audioDevices.length === 0 ? (
+                <option className="bg-zinc-900">Sin micrófonos detectados</option>
+              ) : (
+                <>
+                  <option value="" className="bg-zinc-900">Sin seleccionar</option>
+                  {audioDevices.map(device => (
+                    <option key={device.deviceId} value={device.deviceId} className="bg-zinc-900">
+                      {device.label || `Micrófono (${device.deviceId.slice(0, 8)}...)`}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+            <div className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${selectedDeviceId ? 'text-green-400' : 'text-zinc-500'}`}>
+              <ChevronDown size={16} />
+            </div>
+          </div>
         </div>
       </div>
 
