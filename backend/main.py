@@ -28,6 +28,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from groq import Groq
+import httpx
 from dotenv import load_dotenv
 import shutil
 import tempfile
@@ -204,6 +205,107 @@ def run_groq_transcription(client, path):
             model="whisper-large-v3",
             response_format="verbose_json",
         )
+
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Reglas de salida obligatorias: el modelo SOLO responde en Markdown.
+MD_OUTPUT_RULES = """IMPORTANTE — Reglas de salida obligatorias:
+- Respondé ÚNICAMENTE con texto en formato Markdown válido.
+- No uses JSON, XML, HTML, ni texto sin formato como respuesta.
+- El resultado debe ser íntegramente Markdown: títulos con #, listas con - o 1., negritas con **, tablas con |, etc.
+- No agregues texto fuera del Markdown: sin saludos, sin explicaciones, sin comentarios antes ni después.
+- No envuelvas la respuesta en bloques de código; el Markdown ES la respuesta completa."""
+
+
+async def call_openrouter_stream(api_key, messages):
+    """
+    Llama a OpenRouter con el router automático (openrouter/auto) en modo streaming.
+    Devuelve un generador de eventos SSE con status 'chunk' o 'error'.
+    """
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "openrouter/auto",
+        "messages": messages,
+        "stream": True,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream(
+                "POST", OPENROUTER_URL, headers=headers, json=payload
+            ) as response:
+                if response.status_code == 401:
+                    yield {"status": "error", "detail": "API Key inválida. Revisá la clave de texto en Configuración."}
+                    return
+                if response.status_code == 429:
+                    yield {"status": "error", "detail": "Límite de uso alcanzado en OpenRouter. Esperá un momento o cambiá de clave."}
+                    return
+                if response.status_code != 200:
+                    body = await response.aread()
+                    detail = body.decode("utf-8", errors="replace")[:500]
+                    yield {"status": "error", "detail": f"OpenRouter respondió {response.status_code}: {detail}"}
+                    return
+
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:].strip()
+                    if not data_str or data_str == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta") or {}
+                        content = delta.get("content")
+                        if content:
+                            yield {"status": "chunk", "text": content}
+    except Exception as e:
+        yield {"status": "error", "detail": str(e)}
+
+
+@app.post("/process_text")
+async def process_text(data: dict):
+    """
+    Procesa uno o dos textos con IA usando OpenRouter (router automático).
+    El prompt del usuario actúa como system message.
+    """
+    api_key = data.get("api_key")
+    prompt_text = data.get("prompt_text", "").strip()
+    texts = data.get("texts", [])
+
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Se requiere una API Key de texto (OpenRouter). Agregala en Configuración.")
+    if not texts or len(texts) < 1:
+        raise HTTPException(status_code=400, detail="Se requiere al menos un texto para procesar.")
+
+    # Armar el mensaje del usuario: separa cada fuente con un header visible
+    parts = []
+    for i, t in enumerate(texts, 1):
+        name = t.get("name", f"Fuente {i}")
+        content = t.get("content", "")
+        parts.append(f"### Fuente {i}: {name}\n\n{content}")
+    user_content = "\n\n---\n\n".join(parts)
+
+    system_content = prompt_text or "Procesá el texto proporcionado y devolvé el resultado."
+    # Las reglas de Markdown SIEMPRE van primero; el prompt del usuario no puede desactivarlas.
+    messages = [
+        {"role": "system", "content": MD_OUTPUT_RULES},
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_content},
+    ]
+
+    async def event_generator():
+        async for event in call_openrouter_stream(api_key, messages):
+            yield f"data: {json.dumps(event)}\n\n"
+        yield f"data: {json.dumps({'status': 'done'})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.post("/transcribe")
 async def transcribe_audio(

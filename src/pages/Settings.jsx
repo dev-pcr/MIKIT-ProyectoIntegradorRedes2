@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Key, Plus, Trash2, ShieldCheck, LayoutTemplate, AlertCircle, Check, Edit2, MicVocal, Braces, MessageSquareText, Eye, X } from 'lucide-react'
+import { Key, Plus, Trash2, ShieldCheck, LayoutTemplate, AlertCircle, Check, Edit2, MicVocal, Braces, MessageSquareText, Eye, X, ChevronDown } from 'lucide-react'
 import { getApiKeys, saveApiKeys, getTextApiKeys, saveTextApiKeys, getTemplates, saveTemplates, getPromptTemplates, savePromptTemplates } from '../utils/preferences'
 
 const maskKey = (keyString) => {
@@ -8,77 +8,102 @@ const maskKey = (keyString) => {
   return `${keyString.slice(0, 4)}...${keyString.slice(-4)}`;
 }
 
-function ApiKeysSection({ title, description, icon, keys, newAlias, setNewAlias, newValue, setNewValue, onAdd, onActivate, onDelete, emptyText, placeholder = 'API Key (gsk_...)' }) {
+function CollapsibleSection({ title, description, icon, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen)
   return (
-    <section className="space-y-6">
-      <div className="flex items-center gap-3 text-white">
-        {icon}
-        <div>
-          <h3 className="text-xl font-bold">{title}</h3>
-          {description ? <p className="text-xs text-zinc-500">{description}</p> : null}
-        </div>
-      </div>
-
-      <div className="glass-card divide-y divide-white/5">
-        <div className="p-6 bg-brand-500/5 flex items-start gap-4">
-          <div className="p-2 rounded-lg bg-brand-500/10 text-brand-500">
-            <ShieldCheck size={20} />
-          </div>
+    <section className="space-y-4">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between gap-3 text-left group"
+        aria-expanded={open}
+      >
+        <div className="flex items-center gap-3 text-white">
+          {icon}
           <div>
-            <p className="text-sm text-zinc-300 font-medium">Seguridad de Datos</p>
-            <p className="text-xs text-zinc-500">Tus claves se guardan localmente en `localStorage` y nunca se envían a nuestros servidores.</p>
+            <h3 className="text-xl font-bold group-hover:text-brand-400 transition-colors">{title}</h3>
+            {description ? <p className="text-xs text-zinc-500">{description}</p> : null}
           </div>
         </div>
-
-        {keys.map((k) => (
-          <div key={k.id} className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className={`w-2 h-2 rounded-full ${k.active ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-zinc-700'}`} />
-              <div>
-                <p className="font-semibold text-white">{k.alias}</p>
-                <p className="text-xs font-mono text-zinc-500">{k.active ? 'Activa' : 'Inactiva'} · {maskKey(k.key)}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {!k.active ? (
-                <button onClick={() => onActivate(k.id)} className="px-3 py-1.5 text-xs font-medium glass hover:bg-white/10 rounded-lg transition-all text-white">
-                  Activar
-                </button>
-              ) : null}
-              <button onClick={() => onDelete(k)} className="p-2 hover:bg-red-500/10 text-zinc-500 hover:text-red-500 rounded-lg transition-all">
-                <Trash2 size={18} />
-              </button>
-            </div>
-          </div>
-        ))}
-
-        {keys.length === 0 ? (
-          <div className="p-6 text-center text-zinc-500 text-sm">
-            {emptyText}
-          </div>
+        <ChevronDown className={`flex-shrink-0 transition-transform duration-300 ${open ? 'rotate-180 text-brand-400' : 'text-zinc-500 group-hover:text-white'}`} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open ? (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.2, 0.65, 0.3, 0.9] }}
+            className="overflow-hidden"
+          >
+            {children}
+          </motion.div>
         ) : null}
+      </AnimatePresence>
+    </section>
+  )
+}
 
-        <div className="p-6 flex gap-3">
-          <input
-            type="text"
-            value={newAlias}
-            onChange={(e) => setNewAlias(e.target.value)}
-            placeholder="Alias (ej. Mi Clave)"
-            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-brand-500/50 transition-colors"
-          />
-          <input
-            type="password"
-            value={newValue}
-            onChange={(e) => setNewValue(e.target.value)}
-            placeholder={placeholder}
-            className="flex-[2] bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-brand-500/50 transition-colors"
-          />
-          <button onClick={onAdd} className="btn-primary py-2 px-4 whitespace-nowrap">
-            <Plus size={18} /> Agregar
-          </button>
+function ApiKeysSection({ keys, newAlias, setNewAlias, newValue, setNewValue, onAdd, onActivate, onDelete, emptyText, placeholder = 'API Key (gsk_...)' }) {
+  return (
+    <div className="glass-card divide-y divide-white/5">
+      <div className="p-6 bg-brand-500/5 flex items-start gap-4">
+        <div className="p-2 rounded-lg bg-brand-500/10 text-brand-500">
+          <ShieldCheck size={20} />
+        </div>
+        <div>
+          <p className="text-sm text-zinc-300 font-medium">Seguridad de Datos</p>
+          <p className="text-xs text-zinc-500">Tus claves se guardan localmente en `localStorage` y nunca se envían a nuestros servidores.</p>
         </div>
       </div>
-    </section>
+
+      {keys.map((k) => (
+        <div key={k.id} className="p-6 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className={`w-2 h-2 rounded-full ${k.active ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-zinc-700'}`} />
+            <div>
+              <p className="font-semibold text-white">{k.alias}</p>
+              <p className="text-xs font-mono text-zinc-500">{k.active ? 'Activa' : 'Inactiva'} · {maskKey(k.key)}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {!k.active ? (
+              <button onClick={() => onActivate(k.id)} className="px-3 py-1.5 text-xs font-medium glass hover:bg-white/10 rounded-lg transition-all text-white">
+                Activar
+              </button>
+            ) : null}
+            <button onClick={() => onDelete(k)} className="p-2 hover:bg-red-500/10 text-zinc-500 hover:text-red-500 rounded-lg transition-all">
+              <Trash2 size={18} />
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {keys.length === 0 ? (
+        <div className="p-6 text-center text-zinc-500 text-sm">
+          {emptyText}
+        </div>
+      ) : null}
+
+      <div className="p-6 flex gap-3">
+        <input
+          type="text"
+          value={newAlias}
+          onChange={(e) => setNewAlias(e.target.value)}
+          placeholder="Alias (ej. Mi Clave)"
+          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-brand-500/50 transition-colors"
+        />
+        <input
+          type="password"
+          value={newValue}
+          onChange={(e) => setNewValue(e.target.value)}
+          placeholder={placeholder}
+          className="flex-[2] bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-brand-500/50 transition-colors"
+        />
+        <button onClick={onAdd} className="btn-primary py-2 px-4 whitespace-nowrap">
+          <Plus size={18} /> Agregar
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -525,51 +550,53 @@ export default function Settings() {
       </AnimatePresence>
 
       {/* Groq API Keys Section */}
-      <ApiKeysSection
+      <CollapsibleSection
         title="Claves API de Groq para audio"
         description="Administra las claves usadas para transcribir audio en el Transcriptor."
         icon={<MicVocal className="text-brand-500" />}
-        keys={keys}
-        newAlias={newKeyAlias}
-        setNewAlias={setNewKeyAlias}
-        newValue={newKeyValue}
-        setNewValue={setNewKeyValue}
-        onAdd={handleAddKey}
-        onActivate={handleActivateKey}
-        onDelete={(k) => confirmDeleteKey(k, 'audio')}
-        emptyText="No hay claves registradas. Agrega una para poder usar el transcriptor."
-        placeholder="API Key (gsk_...)"
-      />
+        defaultOpen
+      >
+        <ApiKeysSection
+          keys={keys}
+          newAlias={newKeyAlias}
+          setNewAlias={setNewKeyAlias}
+          newValue={newKeyValue}
+          setNewValue={setNewKeyValue}
+          onAdd={handleAddKey}
+          onActivate={handleActivateKey}
+          onDelete={(k) => confirmDeleteKey(k, 'audio')}
+          emptyText="No hay claves registradas. Agrega una para poder usar el transcriptor."
+          placeholder="API Key (gsk_...)"
+        />
+      </CollapsibleSection>
 
       {/* Groq API Keys (texto) Section */}
-      <ApiKeysSection
+      <CollapsibleSection
         title="Claves API para procesado de texto"
         description="Administra las claves usadas para el procesado de texto (resúmenes, correcciones y análisis)."
         icon={<Braces className="text-brand-500" />}
-        keys={textKeys}
-        newAlias={newTextKeyAlias}
-        setNewAlias={setNewTextKeyAlias}
-        newValue={newTextKeyValue}
-        setNewValue={setNewTextKeyValue}
-        onAdd={handleAddTextKey}
-        onActivate={handleActivateTextKey}
-        onDelete={(k) => confirmDeleteKey(k, 'text')}
-        emptyText="No hay claves registradas. Agrega una para poder usar el procesado de texto."
-        placeholder="API Key (gsk_...)"
-      />
+      >
+        <ApiKeysSection
+          keys={textKeys}
+          newAlias={newTextKeyAlias}
+          setNewAlias={setNewTextKeyAlias}
+          newValue={newTextKeyValue}
+          setNewValue={setNewTextKeyValue}
+          onAdd={handleAddTextKey}
+          onActivate={handleActivateTextKey}
+          onDelete={(k) => confirmDeleteKey(k, 'text')}
+          emptyText="No hay claves registradas. Agrega una para poder usar el procesado de texto."
+          placeholder="API Key (gsk_...)"
+        />
+      </CollapsibleSection>
 
       {/* Templates Section */}
-      <section className="space-y-6">
-        <div className="flex items-center gap-3 text-white">
-          <LayoutTemplate className="text-brand-500" />
-          <h3 className="text-xl font-bold">Plantillas de Nombre</h3>
-        </div>
-
+      <CollapsibleSection
+        title="Plantillas de Nombre"
+        description="Define prefijos para tus grabaciones. Se usarán al guardar para organizar tus archivos automáticamente."
+        icon={<LayoutTemplate className="text-brand-500" />}
+      >
         <div className="glass-card p-6 space-y-6">
-          <p className="text-sm text-zinc-500">
-            Define prefijos para tus grabaciones. Se usarán al guardar para organizar tus archivos automáticamente.
-          </p>
-
           <div className="flex flex-wrap gap-2">
             {templates.map((t, i) => (
               <div key={i} className="glass bg-white/5 px-4 py-2 rounded-xl flex items-center gap-2 group border-brand-500/20">
@@ -602,18 +629,14 @@ export default function Settings() {
             </button>
           </div>
         </div>
-      </section>
+      </CollapsibleSection>
 
       {/* Prompt Templates Section */}
-      <section className="space-y-6">
-        <div className="flex items-center gap-3 text-white">
-          <MessageSquareText className="text-brand-500" />
-          <div>
-            <h3 className="text-xl font-bold">Plantillas de Prompts</h3>
-            <p className="text-xs text-zinc-500">Instrucciones para modelos de IA. Se usarán en el procesado de texto y otras funcionalidades futuras.</p>
-          </div>
-        </div>
-
+      <CollapsibleSection
+        title="Plantillas de Prompts"
+        description="Instrucciones para modelos de IA. Se usarán en el procesado de texto y otras funcionalidades futuras."
+        icon={<MessageSquareText className="text-brand-500" />}
+      >
         <div className="glass-card divide-y divide-white/5">
           {promptTemplates.map((p, i) => (
             <div key={p.id} className="p-6 flex items-start justify-between gap-4">
@@ -647,7 +670,7 @@ export default function Settings() {
             </button>
           </div>
         </div>
-      </section>
+      </CollapsibleSection>
     </div>
   )
 }

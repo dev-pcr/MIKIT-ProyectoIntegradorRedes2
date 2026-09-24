@@ -5,6 +5,7 @@ import Recorder from './pages/Recorder'
 import Transcriber from './pages/Transcriber'
 import History from './pages/History'
 import Settings from './pages/Settings'
+import AIProcessor from './pages/AIProcessor'
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
         <Route path="grabadora" element={<Recorder />} />
         <Route path="transcriptor" element={<Transcriber />} />
         <Route path="historial" element={<History />} />
+        <Route path="procesar-ia" element={<AIProcessor />} />
         <Route path="configuracion" element={<Settings />} />
       </Route>
     </Routes>
