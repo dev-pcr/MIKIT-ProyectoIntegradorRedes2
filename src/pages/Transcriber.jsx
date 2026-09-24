@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion'
-import { Upload, FileAudio, X, Copy, Download, Save, Loader2, AlertCircle, Trash2, Check, CheckCircle2, Circle, CircleAlert, CircleDotDashed, CircleX, MicVocal, Play, Pause, RotateCcw, RotateCw, ChevronLeft, ChevronRight, FastForward, FileText } from 'lucide-react'
+import { Upload, FileAudio, X, Copy, Download, Save, Loader2, AlertCircle, Trash2, Check, CheckCircle2, Circle, CircleAlert, CircleDotDashed, CircleX, MicVocal, Play, Pause, RotateCcw, RotateCw, ChevronLeft, ChevronRight, FastForward, FileText, ChevronDown } from 'lucide-react'
 import { transcribeAudioStream, saveToDesktop } from '../utils/api'
-import { getApiKeys, addTranscription } from '../utils/preferences'
+import { getApiKeys, addTranscription, getTemplates } from '../utils/preferences'
 import { saveKaraoke } from '../utils/storage'
 import { useLocation } from 'react-router-dom'
 
@@ -36,6 +36,14 @@ export default function Transcriber() {
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false)
   const [saveName, setSaveName] = useState('')
   const [toasts, setToasts] = useState([])
+
+  // Nombre: plantilla + nombre específico (como la grabadora)
+  const [templates, setTemplates] = useState([])
+  const [selectedTemplate, setSelectedTemplate] = useState('')
+
+  useEffect(() => {
+    setTemplates(getTemplates())
+  }, [])
 
   // Karaoke preview state (player + fragmento actual del resultado)
   const [viewMode, setViewMode] = useState('karaoke') // 'karaoke' | 'text'
@@ -213,9 +221,16 @@ export default function Transcriber() {
     }
   }
 
+  const getPreviewName = () => {
+    const dateStr = new Date().toLocaleDateString().replace(/\//g, '-')
+    const tmplStr = selectedTemplate ? `${selectedTemplate} ` : ''
+    const nameStr = saveName ? saveName : 'Transcripción Nueva'
+    return `${dateStr} ${tmplStr}${nameStr}`.trim()
+  }
+
   const handleSaveToHistory = () => {
     addTranscription({
-      name: saveName,
+      name: getPreviewName(),
       text: result
     })
     setIsSaveModalOpen(false)
@@ -230,7 +245,7 @@ export default function Transcriber() {
     try {
       const blob = file instanceof File ? file : new Blob([file], { type: file.type || 'audio/webm' })
       await saveKaraoke(blob, {
-        name: saveName,
+        name: getPreviewName(),
         text: result,
         segments,
         duration: segments.length ? segments[segments.length - 1].end : 0
@@ -316,7 +331,7 @@ export default function Transcriber() {
 
   const handleExportKaraokeMd = async () => {
     try {
-      const karaoke = { name: saveName, segments, createdAt: new Date().toLocaleString('es-AR') }
+      const karaoke = { name: getPreviewName(), segments, createdAt: new Date().toLocaleString('es-AR') }
       await saveToDesktop(karaoke.name, karaokeToMarkdown(karaoke))
       addToast('Karaoke exportado como .md en el Escritorio', 'success')
     } catch (err) {
@@ -378,16 +393,43 @@ export default function Transcriber() {
               animate={{ scale: 1, opacity: 1 }}
               className="glass-card p-8 w-full max-w-md space-y-6"
             >
-              <h3 className="text-2xl font-bold text-white">Guardar en Historial</h3>
-              <div className="space-y-2">
-                <label className="text-sm text-zinc-400">Nombre de la transcripción</label>
-                <input
-                  type="text"
-                  value={saveName}
-                  onChange={(e) => setSaveName(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-brand-500 transition-all"
-                  autoFocus
-                />
+              <h3 className="text-2xl font-bold text-white">Guardar Transcripción</h3>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm text-zinc-400">Plantilla de Nombre (Opcional)</label>
+                  <div className="relative">
+                    <select
+                      value={selectedTemplate}
+                      onChange={(e) => setSelectedTemplate(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-brand-500 transition-all appearance-none cursor-pointer"
+                    >
+                      <option value="" className="bg-zinc-900">Sin plantilla</option>
+                      {templates.map((t, i) => (
+                        <option key={i} value={t} className="bg-zinc-900">{t}</option>
+                      ))}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500">
+                      <ChevronDown size={18} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm text-zinc-400">Nombre Específico</label>
+                  <input
+                    type="text"
+                    value={saveName}
+                    onChange={(e) => setSaveName(e.target.value)}
+                    placeholder="Ej. Notas de la reunión"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-brand-500 transition-all"
+                    autoFocus
+                  />
+                </div>
+
+                <div className="p-4 rounded-xl bg-brand-500/10 border border-brand-500/20">
+                  <p className="text-xs text-brand-400 mb-1">Vista Previa del Nombre:</p>
+                  <p className="text-sm text-white font-medium break-all">{getPreviewName()}</p>
+                </div>
               </div>
 
               {segments.length > 0 ? (
