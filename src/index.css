@@ -14,12 +14,11 @@ body {
   background: radial-gradient(circle at 0% 0%, #1e1b4b 0%, transparent 50%),
               radial-gradient(circle at 100% 100%, #312e81 0%, transparent 50%),
               radial-gradient(circle at 50% 50%, #09090b 0%, #020617 100%);
-  background-attachment: fixed;
 }
 
 @layer components {
   .glass {
-    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+    @apply bg-white/10 border border-white/10;
   }
   
   .glass-card {
@@ -56,7 +55,10 @@ body {
   @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
 }
 
-/* Mesh Gradient Animation */
+/* Mesh Gradient Animation
+   NOTA: sin filter: blur() — el blur de pantalla completa fuerza re-rasterizacion
+   del viewport en cada frame y hunde los FPS. Se reemplaza por radial-gradients
+   suaves (mismo look, costo de composicion minimo). */
 .bg-mesh {
   position: fixed;
   top: 0;
@@ -65,12 +67,20 @@ body {
   height: 100%;
   z-index: -1;
   opacity: 0.4;
-  filter: blur(100px);
 }
 
 .mesh-circle {
   position: absolute;
   border-radius: 50%;
-  filter: blur(80px);
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.16) 0%, transparent 65%);
   animation: float 20s infinite alternate ease-in-out;
+  will-change: transform;
+}
+
+.mesh-circle:nth-child(2) { animation-delay: -6s; }
+.mesh-circle:nth-child(3) { animation-delay: -12s; }
+
+@keyframes float {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(40px, -30px) scale(1.06); }
 }

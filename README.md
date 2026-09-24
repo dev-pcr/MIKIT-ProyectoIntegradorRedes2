@@ -2,7 +2,7 @@
 
 **MIKIT** es un software libre de grabación de audio y transcripción inteligente con IA. Podés grabar desde la app, subir archivos de audio (sin límite de tamaño) y obtener transcripciones con marcas de tiempo, párrafos automáticos y exportación a `.md` y `.mp3` directamente en tu Escritorio.
 
-Funciona como aplicación web (PWA) y como app de escritorio para Windows.
+Corre **100% en local** dentro del navegador: un doble clic y la app queda lista, sin instalar nada más que las dependencias del proyecto.
 
 ---
 
@@ -14,118 +14,141 @@ Podés donar a través de Mercado Pago al alias **MP.PAGAR**, a nombre de **Pabl
 
 ---
 
-## Características
+## Arquitectura
 
-- **Grabadora** con visualizador en tiempo real, historial y plantillas de nombres.
-- **Transcriptor** de audio con IA (Groq `whisper-large-v3`), con progreso en vivo.
-- **Audios largos sin límite de tamaño**: el backend fracciona el audio y lo transcribe por partes.
-- **Rotación de API Keys**: si tenés varias claves de Groq, MIKIT las rota automáticamente ante límites de uso (rate limits) para no interrumpirse.
-- **Párrafos automáticos** basados en silencios (1.5s) para transcripciones legibles.
-- **Exportación** a Markdown (`.md`) y MP3 (22050 Hz, 96 kbps) en el Escritorio, con exportación masiva del historial.
-- **Configuración** de API Keys y plantillas de nombres desde la propia app.
-
-## Stack
-
-| Capa | Tecnología |
-| --- | --- |
-| Frontend | React 18, Vite, Tailwind CSS, Framer Motion, Lucide React |
-| Backend | Python, FastAPI, Uvicorn, Groq SDK, pydub |
-| Escritorio | PyWebView (wrapper opcional) |
-
-## Estructura del proyecto
+MIKIT es un **monolito local**: el frontend y el backend corren en la misma máquina y, en uso normal, se sirven desde **un solo puerto** (`http://127.0.0.1:8000`).
 
 ```
-├── src/                  # Frontend React
-│   ├── pages/            # Home, Recorder, Transcriber, Settings
-│   ├── components/       # Layout (sidebar) y UI
-│   └── utils/            # api, storage (IndexedDB), preferences
-├── backend/
-│   ├── main.py           # API FastAPI: /transcribe, /save_md, /save_audio
-│   ├── utils/audio.py    # Fraccionamiento y normalización de audio
-│   └── requirements.txt  # Dependencias Python
-├── public/               # Assets públicos (logo, favicon)
-├── launcher.py           # App de escritorio (PyWebView)
-└── Especificaciones.md   # Documento de especificaciones del sistema
+┌────────────────────────────────────────────────────────────┐
+│                    Navegador (localhost)                   │
+│                                                            │
+│   React (dist/)  ──►  http://127.0.0.1:8000               │
+│        │                        │                          │
+│        └──────────┬─────────────┘                          │
+│                   ▼                                        │
+│   FastAPI (backend/main.py)                                │
+│     • Sirve el frontend compilado (dist/)                  │
+│     • /transcribe  → streaming SSE → Groq (whisper-large)  │
+│     • /save_md     → exporta .md al Escritorio             │
+│     • /save_audio  → exporta .mp3 al Escritorio            │
+│     • Rotación de API keys ante rate limits                │
+└────────────────────────────────────────────────────────────┘
 ```
+
+### Frontend (React + Vite)
+
+- Páginas: **Home**, **Grabadora**, **Transcriptor**, **Configuración** (React Router con sidebar persistente).
+- La Grabación usa `MediaRecorder` y guarda en **IndexedDB** (historial local del navegador).
+- El Transcriptor consume el backend por **streaming (SSE)** y muestra el progreso en vivo.
+- `npm run build` compila todo en `dist/` (minificado y con hash para caché).
+
+### Backend (FastAPI)
+
+- Sirve el frontend compilado (`dist/`) con SPA fallback — por eso todo vive en un solo puerto.
+- **`/transcribe`**: recibe el audio, lo fracciona (máx. 10 min por parte, cortando por silencio), lo envía a Groq (`whisper-large-v3`) con rotación automática de API keys, y devuelve líneas JSON en streaming.
+- **Párrafos automáticos**: detecta silencios de 1.5 s para armar transcripciones legibles.
+- **`/save_md`** y **`/save_audio`**: exportan transcripciones y grabaciones al **Escritorio** real del usuario (resuelve la ruta automáticamente, incluso con redirección a OneDrive).
+- Requiere **FFmpeg** para procesar audio.
+
+### Persistencia
+
+Los datos viven en la PC donde corre la app, **nunca en el repositorio**:
+
+| Dato | Dónde se guarda |
+|---|---|
+| Grabaciones (historial) | IndexedDB del navegador |
+| API keys y plantillas | localStorage del navegador |
+| Exportaciones (`.md` / `.mp3`) | Escritorio del usuario |
+
+Esto mantiene el git liviano y permite que cada persona use el proyecto con sus propios datos: se clona, se ejecuta y listo.
+
+---
 
 ## Requisitos previos
 
-- **Node.js** 18 o superior
-- **Python** 3.10 o superior
-- **FFmpeg** en el `PATH` (o en una carpeta `ffmpeg/` en la raíz del proyecto) — necesario para procesar audio
-- **API key de Groq** (gratuita en [console.groq.com](https://console.groq.com))
+- **Windows** (el launcher es un `.bat`).
+- **Python** 3.10 o superior.
+- **Node.js** 18 o superior.
+- **FFmpeg** en el `PATH` (o en una carpeta `ffmpeg/` en la raíz del proyecto).
+- **API key de Groq** (gratuita en [console.groq.com](https://console.groq.com)).
 
-## Cómo ejecutar en desarrollo
+## Cómo usar el programa
 
-Necesitás dos terminales: una para el backend y otra para el frontend.
+### Arranque rápido (recomendado)
 
-### 1. Backend (API)
+Doble clic en **`iniciar.bat`** (en la raíz del proyecto). El script:
 
-Desde la raíz del proyecto:
+1. Instala dependencias si falta alguna (venv de Python + `npm install`).
+2. Compila el frontend si no existe `dist/` (`npm run build`).
+3. Levanta el backend en `http://127.0.0.1:8000`.
+4. Abre el navegador con MIKIT listo.
+
+> Si el puerto 8000 está ocupado, el script lo detecta y avisa. Para cerrar, cerrá la consola (o Ctrl+C) — el script se encarga de no dejar procesos colgados.
+
+### Configurar la API Key (primera vez)
+
+- En la app: entrá a **Configuración** y pegá tu API key de Groq. Podés cargar varias: MIKIT las rota automáticamente ante límites de uso.
+
+### Qué podés hacer
+
+1. **Grabar** un audio desde la Grabadora (queda en el historial del navegador).
+2. **Transcribir** ese audio o subir cualquier archivo desde el Transcriptor.
+3. **Exportar** el resultado como `.md` y el audio como `.mp3` — caen en tu **Escritorio** (opcionalmente en una carpeta con nombre).
+
+### Modo desarrollo (para tocar código)
+
+En dos terminales, desde la raíz:
 
 ```bash
-python -m venv venv
-```
-
-- Windows:
-  ```bash
-  venv\Scripts\activate
-  ```
-- Linux / macOS:
-  ```bash
-  source venv/bin/activate
-  ```
-
-Luego:
-
-```bash
-pip install -r backend/requirements.txt
+# Terminal 1 — backend
 python backend/main.py
-```
 
-La API queda disponible en `http://127.0.0.1:8000`.
-
-### 2. Frontend (interfaz web)
-
-En otra terminal, desde la raíz del proyecto:
-
-```bash
+# Terminal 2 — frontend (Vite con hot reload)
 npm install
 npm run dev
 ```
 
-Abrí la URL que muestra Vite (generalmente `http://localhost:5173`).
+Abrí la URL que muestra Vite (generalmente `http://localhost:5173`). El frontend en dev usa CORS para hablar con el backend en el puerto 8000.
 
-### 3. Configurar la API Key
+---
 
-- En la app: entrá a **Configuración** y pegá tu API key de Groq (podés agregar varias para que MIKIT rote entre ellas).
-- Alternativa: creá un archivo `.env` en la raíz con `GROQ_API_KEY=tu_clave`.
+## Estructura del proyecto
 
-## Ejecutar en modo producción
-
-Construís el frontend y el backend sirve todo en un solo puerto:
-
-```bash
-npm run build
-python backend/main.py
+```
+├── iniciar.bat           # Launcher del prototipo (arranque local)
+├── backend/
+│   ├── main.py           # API FastAPI: /transcribe, /save_md, /save_audio
+│   ├── utils/audio.py    # Fraccionamiento y normalización de audio
+│   └── requirements.txt  # Dependencias Python
+├── src/                  # Frontend React
+│   ├── pages/            # Home, Recorder, Transcriber, Settings
+│   ├── components/       # Layout (sidebar) y UI
+│   └── utils/            # api, storage (IndexedDB), preferences
+├── public/               # Assets públicos (logo, favicon)
+├── dist/                 # Frontend compilado (generado, no se commitea)
+├── MANUAL.md             # Manual de usuario completo
+├── Especificaciones.md   # Especificaciones técnicas y funcionales
+└── PLAN_PROTOTIPO_LOCAL.md  # Plan de conversión a prototipo local
 ```
 
-Abrí `http://127.0.0.1:8000` — MIKIT completo (frontend + API) en una sola URL.
+## Configuración y solución de problemas
 
-## App de escritorio (Windows, opcional)
+**FFmpeg no encontrado**
+Asegurate de tener `ffmpeg` en el `PATH` o la carpeta `backend/ffmpeg/` con el binario dentro.
 
-```bash
-pip install pywebview
-python launcher.py
-```
+**Frontend no carga en el navegador**
+Verificá que el backend esté corriendo en `http://127.0.0.1:8000` y que el puerto no esté ocupado por otro proceso.
 
-Esto abre MIKIT en una ventana nativa de escritorio. Los datos (historial, API keys) se guardan en `Documentos\MIKIT_Data`.
+**Límite de uso de Groq (rate limit)**
+MIKIT rota automáticamente entre las keys configuradas (con un enfriamiento de 30 s tras un 429). Cargá varias keys en Configuración para transcribir audios largos sin interrupciones.
 
-## Dónde se guardan los archivos
+**Audios largos**
+El backend los fracciona en partes de hasta 10 minutos y transcribe cada parte por separado, cortando en silencios para no partir palabras.
 
-Las transcripciones (`.md`) y grabaciones (`.mp3`) se exportan al **Escritorio** de tu usuario, opcionalmente dentro de una carpeta. MIKIT resuelve la ruta real del Escritorio automáticamente (soporta redirección a OneDrive).
+---
 
 ## Documentación
 
 - [`MANUAL.md`](MANUAL.md) — manual de usuario completo, pantalla por pantalla.
 - [`Especificaciones.md`](Especificaciones.md) — especificaciones técnicas y funcionales del sistema.
+- [`PLAN_PROTOTIPO_LOCAL.md`](PLAN_PROTOTIPO_LOCAL.md) — plan de conversión a prototipo local (navegador + `.bat`).

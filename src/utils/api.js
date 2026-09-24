@@ -1,4 +1,6 @@
-const API_BASE_URL = 'http://127.0.0.1:8000';
+// Base relativa: en produccion local el backend sirve el frontend desde el mismo origen.
+// En dev (Vite en 5173) se puede overridear con VITE_API_BASE=http://127.0.0.1:8000
+const API_BASE_URL = import.meta.env.VITE_API_BASE || '';
 
 export async function transcribeAudioStream(file, apiKeys, onProgress) {
   const formData = new FormData();

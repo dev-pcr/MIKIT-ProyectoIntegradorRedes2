@@ -33,6 +33,8 @@ import shutil
 import tempfile
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from starlette.datastructures import MutableHeaders
+from starlette.middleware.gzip import GZipMiddleware
 import os
 from backend.utils.audio import process_and_split
 
@@ -55,6 +57,33 @@ load_dotenv()
 
 app = FastAPI()
 
+# Middleware de cache: los assets de Vite tienen hash (inmutables); el HTML/SPA y las
+# APIs llevan no-cache para recibir siempre la version nueva. Implementado como ASGI
+# puro para no bufferear el streaming de /transcribe.
+class CacheControlMiddleware:
+    """Agrega Cache-Control segun el tipo de recurso."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        if path.startswith("/assets/"):
+            cache_control = "public, max-age=31536000, immutable"
+        else:
+            cache_control = "no-cache"
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["Cache-Control"] = cache_control
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
 # Configuración de CORS para permitir peticiones desde el frontend (Vite corre en otro puerto)
 # Configuración de rutas para PyInstaller
 if getattr(sys, 'frozen', False):
@@ -65,6 +94,7 @@ else:
     BASE_PROJECT_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Ruta a la carpeta dist (Frontend)
+app.add_middleware(CacheControlMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -95,7 +125,10 @@ if dist_path and os.path.exists(dist_path):
     # Solo montamos assets si la carpeta existe físicamente
     assets_dir = os.path.join(dist_path, "assets")
     if os.path.exists(assets_dir):
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        # GZip SOLO para estaticos. La ruta /transcribe (SSE en streaming)
+        # queda sin comprimir a proposito. GZipMiddleware es de Starlette
+        # (ya instalado con FastAPI), no agrega dependencias.
+        app.mount("/assets", GZipMiddleware(StaticFiles(directory=assets_dir)), name="assets")
     
     @app.get("/")
     async def root():
@@ -432,5 +465,5 @@ async def save_audio(
 
 if __name__ == "__main__":
     import uvicorn
-    # Iniciar el servidor en el puerto 8000
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Solo loopback: el prototipo es 100% local, no se expone a la red.
+    uvicorn.run(app, host="127.0.0.1", port=8000)
