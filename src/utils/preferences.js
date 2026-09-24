@@ -58,3 +58,12 @@ export function deleteTranscription(id) {
   const filtered = all.filter(t => t.id !== id);
   saveTranscriptions(filtered);
 }
+
+export function updateTranscription(id, updates) {
+  const all = getTranscriptions();
+  const idx = all.findIndex(t => t.id === id);
+  if (idx !== -1) {
+    all[idx] = { ...all[idx], ...updates };
+    saveTranscriptions(all);
+  }
+}

@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
-import { Home, Mic, FileText, Settings, Menu, X, ChevronRight, Activity } from 'lucide-react'
+import { Home, Mic, FileText, History, Settings, Menu, X, ChevronRight, Activity } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { checkBackendStatus } from '../utils/api'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -9,6 +9,7 @@ const navItems = [
   { path: '/', icon: Home, label: 'Inicio' },
   { path: '/grabadora', icon: Mic, label: 'Grabadora' },
   { path: '/transcriptor', icon: FileText, label: 'Transcriptor' },
+  { path: '/historial', icon: History, label: 'Historial' },
   { path: '/configuracion', icon: Settings, label: 'Configuración' },
 ]
 

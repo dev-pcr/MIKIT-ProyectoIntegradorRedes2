@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import Home from './pages/Home'
 import Recorder from './pages/Recorder'
 import Transcriber from './pages/Transcriber'
+import History from './pages/History'
 import Settings from './pages/Settings'
 
 function App() {
@@ -12,6 +13,7 @@ function App() {
         <Route index element={<Home />} />
         <Route path="grabadora" element={<Recorder />} />
         <Route path="transcriptor" element={<Transcriber />} />
+        <Route path="historial" element={<History />} />
         <Route path="configuracion" element={<Settings />} />
       </Route>
     </Routes>

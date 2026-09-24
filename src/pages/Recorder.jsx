@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Mic, Square, Play, Pause, Save, Trash2, RotateCcw, RotateCw, FileText, Edit2, Check, X, Copy, Volume2, FastForward, AlertCircle, Download, ChevronDown, FolderDown, Loader2 } from 'lucide-react'
-import { saveRecording, getAllRecordings, deleteRecording, updateRecording } from '../utils/storage'
+import { Mic, Square, Play, Pause, Trash2, RotateCcw, RotateCw, FileText, Check, X, Volume2, FastForward, ChevronDown } from 'lucide-react'
+import { saveRecording } from '../utils/storage'
 import { getTemplates } from '../utils/preferences'
 import { useNavigate } from 'react-router-dom'
-import { saveAudioToDesktop } from '../utils/api'
 
 // Hoisted pure function (js-hoist-regexp best practice)
 const formatTime = (seconds) => {
@@ -17,43 +16,65 @@ const formatTime = (seconds) => {
 export default function Recorder() {
   const [status, setStatus] = useState('inactivo') // inactivo, grabando, pausado, detenido
   const [time, setTime] = useState(0)
-  const [history, setHistory] = useState([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [recordingName, setRecordingName] = useState('')
   const [templates, setTemplates] = useState([])
   const [selectedTemplate, setSelectedTemplate] = useState('')
   const [recentlySaved, setRecentlySaved] = useState(null)
-  
-  // UI States
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
-  const [itemToDelete, setItemToDelete] = useState(null)
-  const [toasts, setToasts] = useState([])
-  const [isExporting, setIsExporting] = useState(false)
 
-  // Player state
+  // Audio input devices (micrófono seleccionado, ej. Bluetooth de solapa)
+  const [audioDevices, setAudioDevices] = useState([])
+  const [selectedDeviceId, setSelectedDeviceId] = useState('')
+
+  // UI States
+  const [toasts, setToasts] = useState([])
+
+  // Player state (banner post-guardado)
   const [activePlayer, setActivePlayer] = useState(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playerTime, setPlayerTime] = useState(0)
   const [playbackRate, setPlaybackRate] = useState(1)
   const audioRef = useRef(null)
 
-  // Editing state
-  const [editingId, setEditingId] = useState(null)
-  const [editName, setEditName] = useState('')
-  
   const mediaRecorder = useRef(null)
   const audioChunks = useRef([])
   const timerRef = useRef(null)
   const navigate = useNavigate()
 
   useEffect(() => {
-    loadHistory()
     setTemplates(getTemplates())
+
+    // Para listar micrófonos con nombre real hay que tener permiso primero:
+    // pedimos un stream mudo y lo cerramos inmediatamente, luego enumeramos.
+    const initDevices = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        stream.getTracks().forEach(track => track.stop())
+      } catch (err) {
+        console.warn('Permiso de micrófono denegado, los nombres de dispositivos no estarán disponibles:', err)
+      }
+      loadDevices()
+    }
+    initDevices()
+
+    // Actualiza la lista si se conecta/desconecta un dispositivo (ej. mic Bluetooth)
+    navigator.mediaDevices.addEventListener?.('devicechange', loadDevices)
+    return () => navigator.mediaDevices.removeEventListener?.('devicechange', loadDevices)
   }, [])
 
-  const loadHistory = async () => {
-    const data = await getAllRecordings()
-    setHistory(data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)))
+  const loadDevices = async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const inputs = devices.filter(d => d.kind === 'audioinput')
+      setAudioDevices(inputs)
+      // Mantener la selección si el dispositivo sigue conectado; si no, quedará sin seleccionar
+      setSelectedDeviceId(prev => {
+        if (prev && inputs.some(d => d.deviceId === prev)) return prev
+        return ''
+      })
+    } catch (err) {
+      console.error('Error al enumerar dispositivos de audio:', err)
+    }
   }
 
   const addToast = (message, type = 'success') => {
@@ -66,21 +87,26 @@ export default function Recorder() {
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          googEchoCancellation: false,
-          googAutoGainControl: false,
-          googNoiseSuppression: false,
-          googHighpassFilter: false,
-          googTypingNoiseDetection: false,
-          channelCount: 2,
-          sampleRate: 48000,
-          sampleSize: 16
-        } 
-      })
+      const audioConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        googEchoCancellation: false,
+        googAutoGainControl: false,
+        googNoiseSuppression: false,
+        googHighpassFilter: false,
+        googTypingNoiseDetection: false,
+        channelCount: 2,
+        sampleRate: 48000,
+        sampleSize: 16
+      }
+
+      // Si el usuario eligió un micrófono específico (ej. Bluetooth), usarlo
+      if (selectedDeviceId) {
+        audioConstraints.deviceId = { exact: selectedDeviceId }
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
 
       const options = { 
         mimeType: 'audio/webm;codecs=opus', 
@@ -161,68 +187,7 @@ export default function Recorder() {
     setSelectedTemplate('')
     setTime(0)
     setStatus('inactivo')
-    loadHistory()
-    addToast('Grabación guardada con éxito', 'success')
-  }
-
-  const confirmDelete = (item) => {
-    setItemToDelete(item)
-    setDeleteModalOpen(true)
-  }
-
-  const executeDelete = async () => {
-    if (!itemToDelete) return
-    await deleteRecording(itemToDelete.id)
-    if (activePlayer?.id === itemToDelete.id) closePlayer()
-    if (recentlySaved?.id === itemToDelete.id) setRecentlySaved(null)
-    loadHistory()
-    setDeleteModalOpen(false)
-    setItemToDelete(null)
-    addToast('Grabación eliminada del historial', 'error')
-  }
-
-  const handleRename = async (item) => {
-    if (editName.trim() === '') return
-    await updateRecording({ ...item, name: editName })
-    setEditingId(null)
-    setEditName('')
-    if (activePlayer?.id === item.id) setActivePlayer(prev => ({ ...prev, name: editName }))
-    loadHistory()
-  }
-
-  const handleSaveToDesktop = async (item) => {
-    try {
-      addToast('Convirtiendo a MP3 y guardando...', 'info')
-      await saveAudioToDesktop(item.blob, item.name)
-      addToast('Audio guardado en el Escritorio como MP3', 'success')
-    } catch (err) {
-      addToast(err.message, 'error')
-    }
-  }
-
-  const handleMassExportRecordings = async () => {
-    if (history.length === 0) {
-      addToast('No hay grabaciones para exportar', 'error')
-      return
-    }
-    setIsExporting(true)
-    const folderName = `MIKIT_Grabaciones_${new Date().toISOString().slice(0,10).replace(/-/g,'')}_${new Date().toTimeString().slice(0,5).replace(':','')}`
-    addToast(`Iniciando exportación de ${history.length} grabaciones...`, 'success')
-
-    let done = 0
-    for (const item of history) {
-      try {
-        addToast(`Procesando ${done + 1} de ${history.length}: ${item.name}`, 'success')
-        await saveAudioToDesktop(item.blob, item.name, folderName)
-        done++
-      } catch (err) {
-        addToast(`Exportación detenida en ${done}/${history.length}. Error en "${item.name}": ${err.message}`, 'error')
-        setIsExporting(false)
-        return
-      }
-    }
-    addToast(`✅ ${done} grabaciones exportadas en carpeta "${folderName}"`, 'success')
-    setIsExporting(false)
+    addToast('Grabación guardada con éxito — la encontrás en Historial', 'success')
   }
 
   const handleTranscribe = (recording) => {
@@ -320,39 +285,6 @@ export default function Recorder() {
         </AnimatePresence>
       </div>
 
-      {/* Delete Confirmation Modal */}
-      <AnimatePresence>
-        {deleteModalOpen ? (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="glass-card p-8 w-full max-w-sm space-y-6 border-red-500/20"
-            >
-              <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 mx-auto">
-                <AlertCircle size={24} />
-              </div>
-              <div className="text-center space-y-2">
-                <h3 className="text-xl font-bold text-white">Eliminar Grabación</h3>
-                <p className="text-sm text-zinc-400">¿Estás seguro de que quieres eliminar <span className="text-white font-medium">"{itemToDelete?.name}"</span>? Esta acción no se puede deshacer.</p>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button 
-                  onClick={() => { setDeleteModalOpen(false); setItemToDelete(null); }}
-                  className="btn-secondary flex-1"
-                >
-                  Cancelar
-                </button>
-                <button onClick={executeDelete} className="bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-4 rounded-xl transition-all flex-1">
-                  Eliminar
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        ) : null}
-      </AnimatePresence>
-
       {/* Save Modal */}
       <AnimatePresence>
         {isModalOpen ? (
@@ -418,6 +350,46 @@ export default function Recorder() {
           </div>
         ) : null}
       </AnimatePresence>
+
+      {/* Selector de micrófono: fuera de la consola de grabación, arriba a la derecha
+          (el dispositivo al que se accede — ej. mic Bluetooth de solapa) */}
+      <div className="flex justify-start -mt-2">
+        <div className="relative text-left w-80 max-w-full">
+          <label className="text-xs text-zinc-500 uppercase tracking-wider flex items-center gap-2 mb-2">
+            <Mic size={12} className={selectedDeviceId ? 'text-green-400' : 'text-zinc-500'} />
+            Selecciona el micrófono
+          </label>
+          <div className="relative">
+            <select
+              value={selectedDeviceId}
+              onChange={(e) => setSelectedDeviceId(e.target.value)}
+              disabled={status !== 'inactivo' || audioDevices.length === 0}
+              className={`w-full bg-transparent border rounded-xl px-4 py-2.5 pr-10 text-sm focus:outline-none transition-all appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                selectedDeviceId
+                  ? 'border-green-500/60 text-green-400 focus:border-green-500'
+                  : 'border-white/10 text-white/60 focus:border-brand-500'
+              }`}
+              title={audioDevices.length === 0 ? 'No se detectaron micrófonos. Conectá tu dispositivo y recargá la página.' : undefined}
+            >
+              {audioDevices.length === 0 ? (
+                <option className="bg-zinc-900">Sin micrófonos detectados</option>
+              ) : (
+                <>
+                  <option value="" className="bg-zinc-900">Sin seleccionar</option>
+                  {audioDevices.map(device => (
+                    <option key={device.deviceId} value={device.deviceId} className="bg-zinc-900">
+                      {device.label || `Micrófono (${device.deviceId.slice(0, 8)}...)`}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+            <div className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${selectedDeviceId ? 'text-green-400' : 'text-zinc-500'}`}>
+              <ChevronDown size={16} />
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Recording Console */}
       <div className="glass-card p-12 flex flex-col items-center justify-center gap-12 relative overflow-hidden">
@@ -586,97 +558,6 @@ export default function Recorder() {
           </motion.div>
         ) : null}
       </AnimatePresence>
-
-      {/* History */}
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between px-2">
-          <h3 className="text-xl font-display font-bold text-white">Historial de Grabaciones</h3>
-          <button
-            onClick={handleMassExportRecordings}
-            disabled={isExporting || history.length === 0}
-            className="btn-secondary px-4 py-2 text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Exportar todas las grabaciones como MP3 en una carpeta del Escritorio"
-          >
-            {isExporting ? <Loader2 size={16} className="animate-spin" /> : <FolderDown size={16} />}
-            {isExporting ? 'Exportando...' : 'Exportar Todo'}
-          </button>
-        </div>
-        <div className="grid grid-cols-1 gap-3 pb-8">
-          {history.length === 0 ? (
-            <div className="p-12 text-center text-zinc-500 border border-dashed border-white/10 rounded-3xl">
-              No hay grabaciones guardadas.
-            </div>
-          ) : (
-            history.map((item, index) => (
-              <motion.div
-                key={item.id}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: index * 0.05 }}
-                className="glass-card p-4 flex items-center justify-between group hover:border-brand-500/30"
-              >
-                <div className="flex items-center gap-4 flex-1">
-                  <button 
-                    onClick={() => openPlayer(item)}
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${activePlayer?.id === item.id ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/20' : 'bg-brand-500/10 text-brand-500 hover:bg-brand-500/20'}`}
-                  >
-                    {activePlayer?.id === item.id && isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
-                  </button>
-                  
-                  <div className="flex-1">
-                    {editingId === item.id ? (
-                      <div className="flex gap-2 mr-4">
-                        <input 
-                          type="text" 
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          className="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-brand-500"
-                          autoFocus
-                          onKeyDown={(e) => e.key === 'Enter' ? handleRename(item) : null}
-                        />
-                        <button onClick={() => handleRename(item)} className="p-1 text-green-400 hover:bg-green-400/10 rounded"><Check size={16} /></button>
-                        <button onClick={() => setEditingId(null)} className="p-1 text-red-400 hover:bg-red-400/10 rounded"><X size={16} /></button>
-                      </div>
-                    ) : (
-                      <>
-                        <h4 className="font-semibold text-white group-hover:text-brand-400 transition-colors flex items-center gap-2">
-                          {item.name}
-                          <button onClick={() => { setEditingId(item.id); setEditName(item.name); }} className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-white transition-all"><Edit2 size={12} /></button>
-                        </h4>
-                        <p className="text-xs text-zinc-500">{item.duration} • {new Date(item.createdAt).toLocaleString()}</p>
-                      </>
-                    )}
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button 
-                    onClick={() => handleSaveToDesktop(item)}
-                    className="p-2 hover:bg-brand-500/10 rounded-lg text-brand-500 hover:text-brand-400 transition-colors"
-                    title="Guardar en Escritorio (MP3)"
-                  >
-                    <Save size={18} />
-                  </button>
-                  <button 
-                    onClick={() => handleTranscribe(item)}
-                    className="p-2 hover:bg-brand-500/10 rounded-lg text-brand-400 hover:text-brand-300 transition-colors"
-                    title="Transcribir"
-                  >
-                    <FileText size={18} />
-                  </button>
-                  <button 
-                    onClick={() => confirmDelete(item)}
-                    className="p-2 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
-                    title="Eliminar"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
-              </motion.div>
-            ))
-          )}
-        </div>
-      </div>
     </div>
   )
 }

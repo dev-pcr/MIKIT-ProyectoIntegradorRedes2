@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion'
-import { Upload, FileAudio, X, Copy, Download, Save, Loader2, AlertCircle, Trash2, ChevronRight, FileText, Check, CheckCircle2, Circle, CircleAlert, CircleDotDashed, CircleX, FolderDown } from 'lucide-react'
+import { Upload, FileAudio, X, Copy, Download, Save, Loader2, AlertCircle, Trash2, Check, CheckCircle2, Circle, CircleAlert, CircleDotDashed, CircleX } from 'lucide-react'
 import { transcribeAudioStream, saveToDesktop } from '../utils/api'
-import { getActiveApiKey, getApiKeys, getTranscriptions, addTranscription, deleteTranscription } from '../utils/preferences'
+import { getApiKeys, addTranscription } from '../utils/preferences'
 import { useLocation } from 'react-router-dom'
 
 export default function Transcriber() {
@@ -13,19 +13,10 @@ export default function Transcriber() {
   const [result, setResult] = useState('')
   const [error, setError] = useState(null)
 
-  // History and Saving states
-  const [history, setHistory] = useState([])
+  // Saving states
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false)
   const [saveName, setSaveName] = useState('')
-  const [expandedId, setExpandedId] = useState(null)
-
-  // UI States (Alerts & Confirmations)
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
-  const [itemToDelete, setItemToDelete] = useState(null)
   const [toasts, setToasts] = useState([])
-
-  // Mass export state
-  const [isExporting, setIsExporting] = useState(false)
 
   // Progress UI States
   const [tasks, setTasks] = useState([]);
@@ -35,14 +26,6 @@ export default function Transcriber() {
   const toggleTaskExpansion = (taskId) => {
     setExpandedTasks((prev) => prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]);
   };
-
-  useEffect(() => {
-    loadHistory()
-  }, [])
-
-  const loadHistory = () => {
-    setHistory(getTranscriptions().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)))
-  }
 
   const addToast = (message, type = 'success') => {
     const id = Date.now()
@@ -59,34 +42,6 @@ export default function Transcriber() {
       setFile(droppedFile)
       setFileName(droppedFile.name)
     }
-  }
-
-  const handleMassExport = async () => {
-    const items = getTranscriptions().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    if (items.length === 0) {
-      addToast('No hay transcripciones para exportar', 'error')
-      return
-    }
-    setIsExporting(true)
-    const folderName = `MIKIT_Transcripciones_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_${new Date().toTimeString().slice(0, 5).replace(':', '')}`
-    addToast(`Iniciando exportación de ${items.length} transcripciones...`, 'success')
-
-    let done = 0
-    for (const item of items) {
-      try {
-        addToast(`Procesando ${done + 1} de ${items.length}: ${item.name}`, 'success')
-        const dateStr = new Date(item.createdAt).toLocaleString('es-AR')
-        const mdContent = `# Transcripción: ${item.name}\n**Fecha:** ${dateStr}\n\n---\n\n${item.text}`
-        await saveToDesktop(item.name, mdContent, folderName)
-        done++
-      } catch (err) {
-        addToast(`Exportación detenida en ${done}/${items.length}. Error en "${item.name}": ${err.message}`, 'error')
-        setIsExporting(false)
-        return
-      }
-    }
-    addToast(`✅ ${done} transcripciones exportadas en carpeta "${folderName}"`, 'success')
-    setIsExporting(false)
   }
 
   const startTranscription = async () => {
@@ -228,22 +183,7 @@ export default function Transcriber() {
       text: result
     })
     setIsSaveModalOpen(false)
-    loadHistory()
-    addToast('Transcripción guardada en el historial', 'success')
-  }
-
-  const confirmDelete = (item) => {
-    setItemToDelete(item)
-    setDeleteModalOpen(true)
-  }
-
-  const executeDelete = () => {
-    if (!itemToDelete) return
-    deleteTranscription(itemToDelete.id)
-    loadHistory()
-    setDeleteModalOpen(false)
-    setItemToDelete(null)
-    addToast('Transcripción eliminada', 'error')
+    addToast('Transcripción guardada — la encontrás en Historial', 'success')
   }
 
   const taskVariants = {
@@ -290,39 +230,6 @@ export default function Transcriber() {
           ))}
         </AnimatePresence>
       </div>
-
-      {/* Delete Confirmation Modal */}
-      <AnimatePresence>
-        {deleteModalOpen ? (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="glass-card p-8 w-full max-w-sm space-y-6 border-red-500/20"
-            >
-              <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 mx-auto">
-                <AlertCircle size={24} />
-              </div>
-              <div className="text-center space-y-2">
-                <h3 className="text-xl font-bold text-white">Eliminar Transcripción</h3>
-                <p className="text-sm text-zinc-400">¿Estás seguro de que quieres eliminar <span className="text-white font-medium">"{itemToDelete?.name}"</span>?</p>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => { setDeleteModalOpen(false); setItemToDelete(null); }}
-                  className="btn-secondary flex-1"
-                >
-                  Cancelar
-                </button>
-                <button onClick={executeDelete} className="bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-4 rounded-xl transition-all flex-1">
-                  Eliminar
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        ) : null}
-      </AnimatePresence>
 
       {/* Save Modal */}
       <AnimatePresence>
@@ -583,7 +490,7 @@ export default function Transcriber() {
               <div className="flex flex-wrap items-center gap-2">
                 <button onClick={() => handleCopy(result)} className="btn-secondary px-4 py-2 text-sm"><Copy size={16} /> Copiar</button>
                 <button onClick={() => handleSaveToDesktop(saveName, result)} className="btn-primary px-4 py-2 text-sm"><Save size={16} /> Guardar en Escritorio</button>
-                <button onClick={() => setIsSaveModalOpen(true)} className="btn-secondary px-4 py-2 text-sm"><Download size={16} /> Historial</button>
+                <button onClick={() => setIsSaveModalOpen(true)} className="btn-secondary px-4 py-2 text-sm"><Download size={16} /> Guardar en Historial</button>
               </div>
             </div>
             <div className="glass-card p-8 min-h-[400px] prose prose-invert max-w-none prose-brand">
@@ -602,85 +509,6 @@ export default function Transcriber() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* History Panel */}
-      <div className="pt-8 border-t border-white/5">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-xl font-bold text-white">Historial de Transcripciones</h3>
-          <button
-            onClick={handleMassExport}
-            disabled={isExporting || history.length === 0}
-            className="btn-secondary px-4 py-2 text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Exportar todo el historial como archivos .md en una carpeta del Escritorio"
-          >
-            {isExporting ? <Loader2 size={16} className="animate-spin" /> : <FolderDown size={16} />}
-            {isExporting ? 'Exportando...' : 'Exportar Todo'}
-          </button>
-        </div>
-        <div className="grid gap-3">
-          {history.length === 0 ? (
-            <div className="p-8 text-center text-zinc-500 border border-dashed border-white/10 rounded-2xl">
-              No hay transcripciones en el historial.
-            </div>
-          ) : (
-            history.map((item) => (
-              <div key={item.id} className="glass-card border-white/5 overflow-hidden transition-all duration-300 hover:border-brand-500/30">
-                <div
-                  className="p-4 flex items-center justify-between cursor-pointer"
-                  onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-brand-500/10 flex items-center justify-center text-brand-500">
-                      <FileText size={20} />
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-white">{item.name}</h4>
-                      <p className="text-xs text-zinc-500">{new Date(item.createdAt).toLocaleString()}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleCopy(item.text); }}
-                      className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors"
-                      title="Copiar texto"
-                    >
-                      <Copy size={18} />
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); confirmDelete(item); }}
-                      className="p-2 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
-                      title="Eliminar"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                    <div className={`p-2 text-zinc-500 transition-transform ${expandedId === item.id ? 'rotate-90' : ''}`}>
-                      <ChevronRight size={20} />
-                    </div>
-                  </div>
-                </div>
-
-                <AnimatePresence>
-                  {expandedId === item.id ? (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="border-t border-white/5 bg-black/20"
-                    >
-                      <div className="p-6">
-                        <div className="flex justify-end gap-2 mb-4">
-                          <button onClick={() => handleSaveToDesktop(item.name, item.text)} className="btn-secondary px-3 py-1.5 text-xs"><Save size={14} /> Escritorio</button>
-                        </div>
-                        <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{item.text}</p>
-                      </div>
-                    </motion.div>
-                  ) : null}
-                </AnimatePresence>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
     </div>
   )
 }
