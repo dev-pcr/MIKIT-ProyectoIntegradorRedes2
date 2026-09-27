@@ -39,7 +39,7 @@ def process_and_split(input_path, temp_dir):
         target_end = min(current_start + max_ms, total_len)
         
         if target_end < total_len:
-            # Buscamos un silencio en los últimos 20 segundos del bloque de 10 min
+            # Buscamos un silencio en los últimos 60 segundos del bloque de 10 min
             # para evitar cortar una frase por la mitad.
             search_window_start = max(current_start, target_end - 60000)
             window = audio[search_window_start:target_end]

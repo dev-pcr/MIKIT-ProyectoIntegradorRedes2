@@ -5,3 +5,8 @@ groq
 httpx
 python-dotenv
 pydub
+
+# Python 3.13 eliminó el módulo `audioop` del stdlib (PEP 594) y pydub no
+# arranca sin él. En 3.12 y anteriores viene con el intérprete, así que este
+# backport solo se instala donde hace falta.
+audioop-lts==0.2.2; python_version >= "3.13"
