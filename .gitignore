@@ -2,6 +2,8 @@
 node_modules/
 dist/
 dist-native/
+# temporales del smoke test de render (npm run smoke)
+.smoke-*/
 build/
 *.log
 npm-debug.log*
@@ -26,12 +28,8 @@ htmlcov/
 # Datos locales generados por la app (nunca se commitean)
 data/
 
-# Desktop App Build Artifacts
-MIKIT-Desktop.exe
-MIKIT-Desktop.spec
-installer/
+# Drop-in local de FFmpeg (el backend lo busca en <raíz>/ffmpeg/)
 ffmpeg/
-legacy_backup/
 
 # IDEs
 .vscode/

@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "smoke": "node scripts/smoke-recorder.mjs",
+    "smoke:all": "node scripts/smoke-recorder.mjs Layout && node scripts/smoke-recorder.mjs Recorder && node scripts/smoke-recorder.mjs Settings && node scripts/smoke-recorder.mjs Transcriber && node scripts/smoke-recorder.mjs History && node scripts/smoke-recorder.mjs AIProcessor && node scripts/smoke-recorder.mjs Home"
   },
   "dependencies": {
     "react": "^18.2.0",
