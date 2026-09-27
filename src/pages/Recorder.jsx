@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Mic, Square, Play, Pause, Trash2, RotateCcw, RotateCw, FileText, Check, X, Volume2, FastForward, ChevronDown } from 'lucide-react'
+import { Mic, Square, Play, Pause, Trash2, RotateCcw, RotateCw, FileText, Check, X, Volume2, FastForward, ChevronDown, Wrench, CircleAlert } from 'lucide-react'
 import { saveRecording } from '../utils/storage'
-import { getTemplates } from '../utils/preferences'
+import { getTemplates, getNoiseGateSettings, saveNoiseGateSettings } from '../utils/preferences'
+import NoiseGateControl from '../components/NoiseGateControl'
+import { useLevelMonitor } from '../hooks/useLevelMonitor'
 import { useNavigate } from 'react-router-dom'
 
 // Hoisted pure function (js-hoist-regexp best practice)
@@ -25,6 +27,40 @@ export default function Recorder() {
   // Audio input devices (micrófono seleccionado, ej. Bluetooth de solapa)
   const [audioDevices, setAudioDevices] = useState([])
   const [selectedDeviceId, setSelectedDeviceId] = useState('')
+
+  // Modal de configuración. Se declara ACÁ, y no con el resto de los UI States
+  // de más abajo, porque `useLevelMonitor` de la línea siguiente lo lee: si se
+  // declara después, el render tira "Cannot access 'isGateModalOpen' before
+  // initialization" y la pantalla queda en blanco.
+  const [isGateModalOpen, setIsGateModalOpen] = useState(false)
+
+  // Puerta de ruido: el umbral arranca en null = "sin calibrar", y eso
+  // mantiene bloqueada la grabación hasta que el usuario lo fije.
+  const [gateThresholdDb, setGateThresholdDb] = useState(() => getNoiseGateSettings().thresholdDb)
+
+  // El monitor sólo tiene sentido con el modal abierto: la barra vive adentro
+  // del modal, así que mantener el micrófono capturado el resto del tiempo
+  // sería dejarlo encendido al pedo (y con el indicador del sistema prendido).
+  // Tampoco tiene sentido grabando: el grabador ya abre su propio stream.
+  const { levelDb, error: monitorError } = useLevelMonitor({
+    enabled: status === 'inactivo' && isGateModalOpen,
+    deviceId: selectedDeviceId || undefined,
+  })
+
+  const handleThresholdChange = (db) => {
+    setGateThresholdDb(db)
+    saveNoiseGateSettings({ thresholdDb: db, enabled: true })
+  }
+
+  // Grabar exige micrófono elegido + puerta calibrada. Sin esto se
+  // grabaría con ganancia y umbral arbitrarios.
+  const micSelected = Boolean(selectedDeviceId)
+  const gateCalibrated = typeof gateThresholdDb === 'number'
+  const canRecord = micSelected && gateCalibrated
+  const blockers = [
+    !micSelected && 'seleccioná un micrófono',
+    !gateCalibrated && 'calibrá la puerta de ruido',
+  ].filter(Boolean)
 
   // UI States
   const [toasts, setToasts] = useState([])
@@ -61,6 +97,15 @@ export default function Recorder() {
     navigator.mediaDevices.addEventListener?.('devicechange', loadDevices)
     return () => navigator.mediaDevices.removeEventListener?.('devicechange', loadDevices)
   }, [])
+
+  // Escape cierra el modal de configuración. Un modal de calibración sin
+  // salida por teclado deja al usuario atrapado en la pantalla.
+  useEffect(() => {
+    if (!isGateModalOpen) return;
+    const onKey = (e) => { if (e.key === 'Escape') setIsGateModalOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isGateModalOpen]);
 
   const loadDevices = async () => {
     try {
@@ -355,6 +400,30 @@ export default function Recorder() {
       <div className="glass-card p-12 flex flex-col items-center justify-center gap-12 relative overflow-hidden">
         <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full blur-[100px] transition-all duration-700 ${status === 'grabando' ? 'bg-red-500/20 scale-150' : 'bg-brand-500/10'}`} />
 
+        {/* Acceso a Configuración adicional. Va dentro del card y no fuera:
+            el card es `overflow-hidden`, así que un botón posicionado por
+            fuera de sus límites quedaría recortado. Como es `absolute`, no
+            participa del flex layout y no corre el contenido. */}
+        <button
+          onClick={() => setIsGateModalOpen(true)}
+          disabled={status !== 'inactivo'}
+          title={status !== 'inactivo' ? 'No se puede configurar con la grabación en curso' : 'Configuración adicional'}
+          aria-label="Abrir configuración adicional"
+          className={`absolute top-5 right-5 z-10 w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
+            status !== 'inactivo'
+              ? 'text-zinc-700 cursor-not-allowed'
+              : !canRecord
+                ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30'
+                : 'text-zinc-400 hover:text-white hover:bg-white/10 border border-white/10'
+          }`}
+        >
+          <Wrench size={17} />
+          {/* Punto de atención: la configuración está incompleta. */}
+          {!canRecord && status === 'inactivo' && (
+            <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-500 border-2 border-zinc-900" />
+          )}
+        </button>
+
         <div className="text-center space-y-4 relative">
           <h2 className="text-6xl font-display font-bold tracking-tighter tabular-nums text-white">
             {formatTime(time)}
@@ -403,14 +472,32 @@ export default function Recorder() {
               else if (status === 'grabando') pauseRecording();
               else if (status === 'pausado') resumeRecording();
             }}
+            disabled={status === 'inactivo' && !canRecord}
+            title={status === 'inactivo' && !canRecord ? `Falta: ${blockers.join(' y ')}` : undefined}
             className={`w-20 h-20 rounded-full flex items-center justify-center transition-all duration-500 shadow-2xl ${
-              status === 'grabando' 
-                ? 'bg-red-600 hover:bg-red-500 shadow-red-600/30' 
-                : 'bg-brand-600 hover:bg-brand-500 shadow-brand-600/30'
+              status === 'grabando'
+                ? 'bg-red-600 hover:bg-red-500 shadow-red-600/30'
+                : status === 'inactivo' && !canRecord
+                  ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed shadow-none'
+                  : 'bg-brand-600 hover:bg-brand-500 shadow-brand-600/30'
             }`}
           >
             {status === 'grabando' ? <Pause size={32} fill="currentColor" /> : <Mic size={32} fill="currentColor" />}
           </button>
+
+          {/* Aviso de por qué el botón no está disponible. Sin esto el
+              bloqueo parece un bug en vez de una regla. Es un botón: el
+              mensaje que falta está en la tuerca, así que abrirla es la
+              acción obvia y no obligamos a que el usuario la busque. */}
+          {status === 'inactivo' && !canRecord && (
+            <button
+              onClick={() => setIsGateModalOpen(true)}
+              className="mt-3 flex items-center justify-center gap-2 text-xs text-amber-400/90 hover:text-amber-300 transition-colors text-center"
+            >
+              <CircleAlert size={13} className="flex-shrink-0" />
+              Para grabar: {blockers.join(' y ')}
+            </button>
+          )}
 
           <AnimatePresence>
             {(status === 'grabando' || status === 'pausado') ? (
@@ -428,45 +515,110 @@ export default function Recorder() {
         </div>
       </div>
 
-      {/* Selector de micrófono: debajo de la consola de grabación
-          (el dispositivo al que se accede — ej. mic Bluetooth de solapa) */}
-      <div className="flex justify-start">
-        <div className="relative text-left w-80 max-w-full">
-          <label className="text-xs text-zinc-500 uppercase tracking-wider flex items-center gap-2 mb-2">
-            <Mic size={12} className={selectedDeviceId ? 'text-green-400' : 'text-zinc-500'} />
-            Selecciona el micrófono
-          </label>
-          <div className="relative">
-            <select
-              value={selectedDeviceId}
-              onChange={(e) => setSelectedDeviceId(e.target.value)}
-              disabled={status !== 'inactivo' || audioDevices.length === 0}
-              className={`w-full bg-transparent border rounded-xl px-4 py-2.5 pr-10 text-sm focus:outline-none transition-all appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                selectedDeviceId
-                  ? 'border-green-500/60 text-green-400 focus:border-green-500'
-                  : 'border-white/10 text-white/60 focus:border-brand-500'
-              }`}
-              title={audioDevices.length === 0 ? 'No se detectaron micrófonos. Conectá tu dispositivo y recargá la página.' : undefined}
+      {/* Configuración adicional: modal y no panel inline. Es una tarea
+          puntual (calibrar una vez) y así la consola queda limpia. */}
+      <AnimatePresence>
+        {isGateModalOpen && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            onClick={(e) => { if (e.target === e.currentTarget) setIsGateModalOpen(false); }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Configuración adicional"
+              /* `.glass` y NO `.glass-card`: esa tiene `-translate-y-1` en
+                 :hover y el modal se levantaría al arrastrar el umbral,
+                 moviendo el slider fuera del cursor. */
+              className="glass rounded-2xl shadow-2xl w-full max-w-2xl p-6 sm:p-7 max-h-[90vh] overflow-y-auto"
             >
-              {audioDevices.length === 0 ? (
-                <option className="bg-zinc-900">Sin micrófonos detectados</option>
-              ) : (
-                <>
-                  <option value="" className="bg-zinc-900">Sin seleccionar</option>
-                  {audioDevices.map(device => (
-                    <option key={device.deviceId} value={device.deviceId} className="bg-zinc-900">
-                      {device.label || `Micrófono (${device.deviceId.slice(0, 8)}...)`}
-                    </option>
-                  ))}
-                </>
-              )}
-            </select>
-            <div className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${selectedDeviceId ? 'text-green-400' : 'text-zinc-500'}`}>
-              <ChevronDown size={16} />
+              <div className="flex items-start justify-between gap-4 mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-brand-500/15 border border-brand-500/30 flex items-center justify-center flex-shrink-0">
+                    <Wrench size={16} className="text-brand-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Configuración adicional</h3>
+                    <p className="text-xs text-zinc-500">Ajustes de captura de audio.</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsGateModalOpen(false)}
+                  aria-label="Cerrar configuración"
+                  className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="glass rounded-xl p-5 sm:p-6">
+          <div className="grid gap-6 md:grid-cols-2 md:gap-8">
+            {/* Selector de micrófono: el dispositivo al que se accede
+                (ej. mic Bluetooth de solapa) */}
+            <div className="min-w-0">
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <span className="text-xs uppercase tracking-wider text-zinc-500 flex items-center gap-2">
+                  <Mic size={12} className={selectedDeviceId ? 'text-green-400' : 'text-zinc-500'} />
+                  Micrófono
+                </span>
+              </div>
+              <div className="relative">
+                <select
+                  value={selectedDeviceId}
+                  onChange={(e) => setSelectedDeviceId(e.target.value)}
+                  disabled={status !== 'inactivo' || audioDevices.length === 0}
+                  className={`w-full bg-transparent border rounded-xl px-4 py-2.5 pr-10 text-sm focus:outline-none transition-all appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    selectedDeviceId
+                      ? 'border-green-500/60 text-green-400 focus:border-green-500'
+                      : 'border-white/10 text-white/60 focus:border-brand-500'
+                  }`}
+                  title={audioDevices.length === 0 ? 'No se detectaron micrófonos. Conectá tu dispositivo y recargá la página.' : undefined}
+                >
+                  {audioDevices.length === 0 ? (
+                    <option className="bg-zinc-900">Sin micrófonos detectados</option>
+                  ) : (
+                    <>
+                      <option value="" className="bg-zinc-900">Sin seleccionar</option>
+                      {audioDevices.map(device => (
+                        <option key={device.deviceId} value={device.deviceId} className="bg-zinc-900">
+                          {device.label || `Micrófono (${device.deviceId.slice(0, 8)}...)`}
+                        </option>
+                      ))}
+                    </>
+                  )}
+                </select>
+                <div className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${selectedDeviceId ? 'text-green-400' : 'text-zinc-500'}`}>
+                  <ChevronDown size={16} />
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-zinc-500">
+                {audioDevices.length === 0
+                  ? 'No se detectaron micrófonos. Conectá uno y recargá la página.'
+                  : selectedDeviceId
+                    ? 'Se usará en la próxima grabación.'
+                    : 'Elegí con cuál grabar. Podés cambiarlo sólo con la grabadora parada.'}
+              </p>
+            </div>
+
+            {/* Puerta de ruido */}
+            <div className="min-w-0">
+              <NoiseGateControl
+                levelDb={levelDb}
+                thresholdDb={gateThresholdDb}
+                onThresholdChange={handleThresholdChange}
+                error={monitorError}
+              />
             </div>
           </div>
-        </div>
-      </div>
+          </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Post-Recording Player */}
       <AnimatePresence>

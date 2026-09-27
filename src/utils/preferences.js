@@ -3,6 +3,7 @@ const TEXT_KEYS_STORAGE = 'groq_text_api_keys';
 const TEMPLATES_STORAGE = 'name_templates';
 const PROMPT_TEMPLATES_STORAGE = 'prompt_templates';
 const TRANSCRIPTIONS_STORAGE = 'transcriptions_history';
+const NOISE_GATE_STORAGE = 'noise_gate_settings';
 
 // --- API Keys ---
 export function getApiKeys() {
@@ -94,4 +95,33 @@ export function updateTranscription(id, updates) {
     all[idx] = { ...all[idx], ...updates };
     saveTranscriptions(all);
   }
+}
+
+// --- Noise gate (puerta de ruido) ---
+// El umbral se guarda en dBFS y arranca en `null` = "sin configurar".
+// Ese `null` es lo que mantiene bloqueado el botón de grabación: no tiene
+// sentido dar por buena una puerta que el usuario nunca calibró.
+export const NOISE_GATE_MIN_DB = -60;
+export const NOISE_GATE_MAX_DB = 0;
+
+export function getNoiseGateSettings() {
+  try {
+    const raw = localStorage.getItem(NOISE_GATE_STORAGE);
+    if (!raw) return { thresholdDb: null, enabled: true };
+    const parsed = JSON.parse(raw);
+    return {
+      thresholdDb: typeof parsed.thresholdDb === 'number' ? parsed.thresholdDb : null,
+      enabled: parsed.enabled !== false,
+    };
+  } catch {
+    return { thresholdDb: null, enabled: true };
+  }
+}
+
+export function saveNoiseGateSettings(settings) {
+  localStorage.setItem(NOISE_GATE_STORAGE, JSON.stringify(settings));
+}
+
+export function clearNoiseGateSettings() {
+  localStorage.removeItem(NOISE_GATE_STORAGE);
 }
