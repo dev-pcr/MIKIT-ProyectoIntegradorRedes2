@@ -30,7 +30,7 @@ export default function Layout() {
   }, [])
 
   return (
-    <div className="flex min-h-screen relative overflow-hidden">
+    <div className="flex h-screen relative overflow-hidden">
       {/* Mesh Background */}
       <div className="bg-mesh">
         <div className="mesh-circle w-[600px] h-[600px] bg-brand-900/20 top-[-10%] left-[-10%]" />
@@ -42,7 +42,7 @@ export default function Layout() {
       <motion.aside 
         initial={false}
         animate={{ width: isSidebarOpen ? 280 : 80 }}
-        className="glass border-r border-white/5 h-screen sticky top-0 z-50 flex flex-col transition-all duration-300"
+        className="glass border-r border-white/5 h-full z-50 flex flex-col transition-all duration-300 shrink-0"
       >
         <div className="p-6 flex items-center justify-between">
           <AnimatePresence mode="wait">
@@ -114,7 +114,7 @@ export default function Layout() {
       </motion.aside>
 
       {/* Main Content */}
-      <main className="flex-1 min-h-screen flex flex-col p-8 overflow-y-auto">
+      <main className="flex-1 min-w-0 flex flex-col p-8 overflow-y-auto">
         <motion.div
           key={location.pathname}
           initial={{ opacity: 0, y: 20 }}
