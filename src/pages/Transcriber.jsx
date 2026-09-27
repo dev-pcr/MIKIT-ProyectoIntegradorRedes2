@@ -14,14 +14,10 @@ const formatTime = (seconds) => {
   return `${hrs > 0 ? hrs.toString().padStart(2, '0') + ':' : ''}${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
-const karaokeToMarkdown = (karaoke) => {
-  const dateStr = new Date(karaoke.createdAt).toLocaleString('es-AR')
-  const fragmentList = karaoke.segments
-    .map((s, i) => `- Fragmento ${i + 1} de ${karaoke.segments.length} — ${formatTime(s.start)} – ${formatTime(s.end)}`)
-    .join('\n')
-  const body = karaoke.segments.map((s) => `[${formatTime(s.start)} – ${formatTime(s.end)}] ${s.text.trim()}`).join('\n')
-  return `# ${karaoke.name}\n**Fecha:** ${dateStr}\n\n${fragmentList}\n\n## Texto completo\n\n${body}\n`
-}
+// El .md existe para releerse y editarse, no para auditar la transcripcion.
+// Por eso va solo el titulo y el texto corrido: sin timestamps, sin lista de
+// fragmentos, sin metadatos. Los tiempos viven en la vista karaoke.
+const transcriptionToMarkdown = (title, text) => `# ${title}\n\n${text}\n`
 
 export default function Transcriber() {
   const location = useLocation()
@@ -212,10 +208,12 @@ export default function Transcriber() {
     addToast('Texto copiado al portapapeles', 'success')
   }
 
-  const handleSaveToDesktop = async (title, text) => {
+  // Unico export a disco: markdown limpio con titulo + texto completo.
+  const handleExportMd = async () => {
     try {
-      await saveToDesktop(title, text)
-      addToast('Archivo guardado en el Escritorio', 'success')
+      const title = saveName || 'Transcripción Nueva'
+      await saveToDesktop(title, transcriptionToMarkdown(title, result))
+      addToast('Transcripción guardada como .md en el Escritorio', 'success')
     } catch (err) {
       addToast(err.message, 'error')
     }
@@ -327,16 +325,6 @@ export default function Transcriber() {
     const nextRate = rates[(rates.indexOf(playbackRate) + 1) % rates.length]
     setPlaybackRate(nextRate)
     if (audioRef.current) audioRef.current.playbackRate = nextRate
-  }
-
-  const handleExportKaraokeMd = async () => {
-    try {
-      const karaoke = { name: getPreviewName(), segments, createdAt: new Date().toLocaleString('es-AR') }
-      await saveToDesktop(karaoke.name, karaokeToMarkdown(karaoke))
-      addToast('Karaoke exportado como .md en el Escritorio', 'success')
-    } catch (err) {
-      addToast(err.message, 'error')
-    }
   }
 
   const taskVariants = {
@@ -702,8 +690,8 @@ export default function Transcriber() {
                     {viewMode === 'karaoke' ? 'Ver texto' : 'Ver karaoke'}
                   </button>
                 ) : null}
-                <button onClick={() => handleCopy(viewMode === 'karaoke' && segments.length ? segments.map(s => s.text.trim()).join(' ') : result)} className="btn-secondary px-4 py-2 text-sm"><Copy size={16} /> Copiar</button>
-                <button onClick={() => handleSaveToDesktop(saveName, result)} className="btn-secondary px-4 py-2 text-sm"><Save size={16} /> Guardar en Escritorio</button>
+                <button onClick={() => handleCopy(viewMode === 'karaoke' && segments.length ? segments.map(s => s.text.trim()).join(' ') : result)} className="btn-secondary px-4 py-2 text-sm" title="Copiar toda la transcripción"><Copy size={16} /> Copiar todo</button>
+                <button onClick={handleExportMd} className="btn-secondary px-4 py-2 text-sm" title="Descargar la transcripción como .md en el Escritorio"><Save size={16} /> Guardar en MD</button>
                 <button onClick={() => setIsSaveModalOpen(true)} className="btn-primary px-4 py-2 text-sm"><Download size={16} /> Guardar</button>
               </div>
             </div>
@@ -722,12 +710,6 @@ export default function Transcriber() {
                     <div className="flex flex-wrap items-center gap-2">
                       <button onClick={() => handleCopy(segments[karaokeIndex].text.trim())} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Copiar fragmento actual">
                         Copiar frag.
-                      </button>
-                      <button onClick={() => handleCopy(result)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Copiar todo el texto">
-                        Copiar todo
-                      </button>
-                      <button onClick={handleExportKaraokeMd} className="px-3 py-1.5 rounded-full text-xs font-bold bg-fuchsia-500/15 text-fuchsia-300 hover:bg-fuchsia-500/25 transition-colors" title="Exportar como .md">
-                        Exportar MD
                       </button>
                     </div>
                   </div>
