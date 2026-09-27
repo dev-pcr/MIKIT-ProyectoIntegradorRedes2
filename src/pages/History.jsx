@@ -467,8 +467,19 @@ export default function History() {
     )
   }
 
+  // Click en el fondo -> colapsa lo expandido. Se ignoran los clicks que caen
+  // dentro de una tarjeta o de una capa flotante (modal/toast), para no cerrar
+  // la expansion mientras el usuario opera un control.
+  // El audio se cierra con closePlayer(): si solo pusieramos expandedKey en null
+  // el player se ocultaria pero el audio seguiria sonando sin controles visibles.
+  const collapseOnBackground = (e) => {
+    if (e.target.closest('[data-history-card], [data-history-overlay]')) return
+    setExpandedKey(null)
+    if (activeKey !== null) closePlayer()
+  }
+
   return (
-    <div className="flex flex-col gap-8 relative pb-12">
+    <div className="flex flex-col gap-8 relative pb-12" onClick={collapseOnBackground}>
       {/* Hidden Audio Element for Player (controlado desde la tarjeta activa) */}
       <audio
         ref={audioRef}
@@ -498,7 +509,7 @@ export default function History() {
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {deleteModalOpen ? (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div data-history-overlay className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -581,6 +592,7 @@ export default function History() {
             return (
               <motion.div
                 key={key}
+                data-history-card
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: Math.min(index * 0.05, 0.5) }}
@@ -606,10 +618,14 @@ export default function History() {
                     ) : (
                       <button
                         onClick={() => setExpandedKey(isExpanded ? null : key)}
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 ${isExpanded ? 'bg-white/20 text-white' : 'bg-white/10 text-zinc-400 hover:bg-white/20'}`}
+                        className={`relative w-10 h-10 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 ${isExpanded ? 'bg-white/20 text-white' : 'bg-white/10 text-zinc-400 hover:bg-white/20'}`}
                         title={isExpanded ? 'Colapsar' : 'Ver transcripción'}
                       >
-                        <ChevronRight size={20} className={`transition-transform duration-300 ${isExpanded ? 'rotate-90' : ''}`} />
+                        {/* Icono de tipo, mismo peso visual que el Play de audio/karaoke.
+                            El chevron queda en la esquina para no perder la señal de
+                            "esto se expande", que antes ocupaba todo el boton. */}
+                        <FileText size={20} />
+                        <ChevronRight size={12} className={`absolute bottom-0.5 right-0.5 transition-transform duration-300 ${isExpanded ? 'rotate-90' : ''}`} />
                       </button>
                     )}
 
