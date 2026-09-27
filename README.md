@@ -1,8 +1,8 @@
-# MIKIT — Transcriptor & Grabador
+# MIKIT — Transcriptor & Grabadora
 
-**MIKIT** es un software libre de grabación de audio y transcripción inteligente con IA. Podés grabar desde la app, subir archivos de audio (sin límite de tamaño) y obtener transcripciones con marcas de tiempo, párrafos automáticos y exportación a `.md` y `.mp3` directamente en tu Escritorio.
+**MIKIT** es un software libre de grabación de audio y procesamiento de texto con IA. Podés grabar desde el app, transcribir archivos de audio (sin límite de tamaño) y obtener resultados en Markdown, exportándolos a tu Escritorio.
 
-Corre **100% en local** dentro del navegador: un doble clic y la app queda lista, sin instalar nada más que las dependencias del proyecto.
+Corre **100% en local** dentro del navegador: un doble clic y la app queda lista.
 
 ---
 
@@ -14,41 +14,68 @@ Podés donar a través de Mercado Pago al alias **MP.PAGAR**, a nombre de **Pabl
 
 ---
 
+## Documentación
+
+Cada documento es dueño de un tipo de información. Si buscás algo y no está en el que estás mirando, es por diseño:
+
+| Documento | Dueño de | Para quién |
+|---|---|---|
+| [`MANUAL.md`](MANUAL.md) | **Cómo se usa** la app, pantalla por pantalla, y **solución de problemas** | Quien usa MIKIT |
+| [`Especificaciones.md`](Especificaciones.md) | **Comportamiento técnico**: endpoints, parámetros, esquemas de datos, algorithms | Quien toca el código |
+| Este `README` | **Identidad, requisitos e instalación** | Quien decide si lo clona |
+
+---
+
 ## Arquitectura
 
-MIKIT es un **monolito local**: el frontend y el backend corren en la misma máquina y, en uso normal, se sirven desde **un solo puerto** (`http://127.0.0.1:8000`).
+MIKIT es un **monolito local**: el frontend y el backend corren en la misma máquina y se sirven desde **un solo puerto** (`http://127.0.0.1:8000`).
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                    Navegador (localhost)                   │
-│                                                            │
-│   React (dist/)  ──►  http://127.0.0.1:8000               │
-│        │                        │                          │
-│        └──────────┬─────────────┘                          │
-│                   ▼                                        │
-│   FastAPI (backend/main.py)                                │
-│     • Sirve el frontend compilado (dist/)                  │
-│     • /transcribe  → streaming SSE → Groq (whisper-large)  │
-│     • /save_md     → exporta .md al Escritorio             │
-│     • /save_audio  → exporta .mp3 al Escritorio            │
-│     • Rotación de API keys ante rate limits                │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    Navegador (localhost)                     │
+│                                                              │
+│   React (dist/)  ──►  http://127.0.0.1:8000                 │
+│        │                        │                            │
+│        └──────────┬─────────────┘                            │
+│                   ▼                                          │
+│   FastAPI (backend/main.py)                                  │
+│     • Sirve el frontend compilado (dist/)                    │
+│     • /transcribe    → streaming SSE → Groq (whisper-large) │
+│     • /process_text  → streaming SSE → OpenRouter            │
+│     • /save_md       → exporta .md al Escritorio             │
+│     • /save_audio    → exporta .mp3 al Escritorio            │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+**Dos motores de IA, pools de claves separados:**
+
+| Función | Proveedor | Para qué |
+|---|---|---|
+| Transcriptor | **Groq** (`whisper-large-v3`) | Audio → texto con marcas de tiempo |
+| Procesar con IA | **OpenRouter** (`openrouter/auto`) | Texto → texto (resumir, corregir, analizar) |
+
+Son independientes: podés usar uno sin el otro. Groq rota claves automáticamente ante rate limits; OpenRouter no rota, pero acepta varias y elige la activa.
 
 ### Frontend (React + Vite)
 
-- Páginas: **Home**, **Grabadora**, **Transcriptor**, **Configuración** (React Router con sidebar persistente).
-- La Grabación usa `MediaRecorder` y guarda en **IndexedDB** (historial local del navegador).
-- El Transcriptor consume el backend por **streaming (SSE)** y muestra el progreso en vivo.
-- `npm run build` compila todo en `dist/` (minificado y con hash para caché).
+Seis páginas con sidebar persistente:
+
+| Página | Ruta |
+|---|---|
+| Inicio | `/` |
+| Grabadora | `/grabadora` |
+| Transcriptor | `/transcriptor` |
+| Historial | `/historial` |
+| Procesar con IA | `/procesar-ia` |
+| Configuración | `/configuracion` |
+
+La Grabación usa `MediaRecorder` y guarda en **IndexedDB**. La transcripción y el procesado de texto consumen el backend por **streaming (SSE)**. `npm run build` compila todo en `dist/` (minificado y con hash para caché).
 
 ### Backend (FastAPI)
 
-- Sirve el frontend compilado (`dist/`) con SPA fallback — por eso todo vive en un solo puerto.
-- **`/transcribe`**: recibe el audio, lo fracciona (máx. 10 min por parte, cortando por silencio), lo envía a Groq (`whisper-large-v3`) con rotación automática de API keys, y devuelve líneas JSON en streaming.
-- **Párrafos automáticos**: detecta silencios de 1.5 s para armar transcripciones legibles.
-- **`/save_md`** y **`/save_audio`**: exportan transcripciones y grabaciones al **Escritorio** real del usuario (resuelve la ruta automáticamente, incluso con redirección a OneDrive).
-- Requiere **FFmpeg** para procesar audio.
+Sirve el frontend compilado (`dist/`) con SPA fallback — por eso todo vive en un solo puerto. Procesa audio con **pydub + FFmpeg**, y expone streaming real (no buffereado) en las dos rutas de IA.
+
+Los detalles de chunking, rotación de claves y esquemas de almacenamiento están en [`Especificaciones.md`](Especificaciones.md).
 
 ### Persistencia
 
@@ -56,11 +83,9 @@ Los datos viven en la PC donde corre la app, **nunca en el repositorio**:
 
 | Dato | Dónde se guarda |
 |---|---|
-| Grabaciones (historial) | IndexedDB del navegador |
-| API keys y plantillas | localStorage del navegador |
+| Grabaciones y karaokes | IndexedDB del navegador |
+| Claves de API y plantillas | localStorage del navegador |
 | Exportaciones (`.md` / `.mp3`) | Escritorio del usuario |
-
-Esto mantiene el git liviano y permite que cada persona use el proyecto con sus propios datos: se clona, se ejecuta y listo.
 
 ---
 
@@ -69,8 +94,9 @@ Esto mantiene el git liviano y permite que cada persona use el proyecto con sus 
 - **Windows** (el launcher es un `.bat`).
 - **Python** 3.10 o superior.
 - **Node.js** 18 o superior.
-- **FFmpeg** en el `PATH` (o en una carpeta `ffmpeg/` en la raíz del proyecto).
-- **API key de Groq** (gratuita en [console.groq.com](https://console.groq.com)).
+- **FFmpeg**: en el `PATH`, o en una carpeta `ffmpeg/` en la **raíz del proyecto** (esa carpeta está en `.gitignore`; es un drop-in local, no se commitea).
+- **API key de Groq** — para transcribir audio ([console.groq.com](https://console.groq.com), gratis).
+- **API key de OpenRouter** — solo si vas a usar **Procesar con IA** ([openrouter.ai](https://openrouter.ai)).
 
 ## Cómo usar el programa
 
@@ -78,22 +104,13 @@ Esto mantiene el git liviano y permite que cada persona use el proyecto con sus 
 
 Doble clic en **`iniciar.bat`** (en la raíz del proyecto). El script:
 
-1. Instala dependencias si falta alguna (venv de Python + `npm install`).
-2. Compila el frontend si no existe `dist/` (`npm run build`).
-3. Levanta el backend en `http://127.0.0.1:8000`.
-4. Abre el navegador con MIKIT listo.
+1. Verifica que existan Python, Node y `curl`.
+2. Crea el entorno virtual de Python e instala `backend/requirements.txt` (solo la primera vez).
+3. Instala las dependencias de Node (`npm install`, solo la primera vez).
+4. Compila el frontend si no existe `dist/` (`npm run build`).
+5. Verifica que el puerto 8000 esté libre, levanta el backend y abre el navegador.
 
-> Si el puerto 8000 está ocupado, el script lo detecta y avisa. Para cerrar, cerrá la consola (o Ctrl+C) — el script se encarga de no dejar procesos colgados.
-
-### Configurar la API Key (primera vez)
-
-- En la app: entrá a **Configuración** y pegá tu API key de Groq. Podés cargar varias: MIKIT las rota automáticamente ante límites de uso.
-
-### Qué podés hacer
-
-1. **Grabar** un audio desde la Grabadora (queda en el historial del navegador).
-2. **Transcribir** ese audio o subir cualquier archivo desde el Transcriptor.
-3. **Exportar** el resultado como `.md` y el audio como `.mp3` — caen en tu **Escritorio** (opcionalmente en una carpeta con nombre).
+> Para detener: Ctrl+C o cerrá la ventana. El script detecta solo cuando el backend se cae.
 
 ### Modo desarrollo (para tocar código)
 
@@ -110,45 +127,33 @@ npm run dev
 
 Abrí la URL que muestra Vite (generalmente `http://localhost:5173`). El frontend en dev usa CORS para hablar con el backend en el puerto 8000.
 
+> Ojo: en modo dev el backend **no** sirve el `dist/`, y `/process_text` sí necesita la carpeta raíz accesible (corre desde la raíz del proyecto).
+
 ---
 
 ## Estructura del proyecto
 
 ```
-├── iniciar.bat           # Launcher del prototipo (arranque local)
+├── iniciar.bat           # Launcher: instala, compila y levanta todo
 ├── backend/
-│   ├── main.py           # API FastAPI: /transcribe, /save_md, /save_audio
+│   ├── main.py           # API FastAPI + serving del frontend
 │   ├── utils/audio.py    # Fraccionamiento y normalización de audio
 │   └── requirements.txt  # Dependencias Python
 ├── src/                  # Frontend React
-│   ├── pages/            # Home, Recorder, Transcriber, Settings
-│   ├── components/       # Layout (sidebar) y UI
-│   └── utils/            # api, storage (IndexedDB), preferences
-├── public/               # Assets públicos (logo, favicon)
-├── dist/                 # Frontend compilado (generado, no se commitea)
-├── MANUAL.md             # Manual de usuario completo
-├── Especificaciones.md   # Especificaciones técnicas y funcionales
-└── PLAN_PROTOTIPO_LOCAL.md  # Plan de conversión a prototipo local
+│   ├── pages/            # Home, Recorder, Transcriber, History, AIProcessor, Settings
+│   ├── components/       # Layout.jsx (sidebar + estado del backend)
+│   └── utils/            # api.js, storage.js (IndexedDB), preferences.js (localStorage)
+├── public/               # Assets públicos (LOGO.png)
+├── ffmpeg/               # Drop-in opcional de FFmpeg (no se commitea)
+├── dist/                 # Frontend compilado (generado)
+├── venv/                 # Entorno virtual de Python (generado)
+├── node_modules/         # Dependencias de Node (generado)
+├── MANUAL.md             # Manual de usuario + solución de problemas
+└── Especificaciones.md   # Comportamiento técnico
 ```
 
 ## Configuración y solución de problemas
 
-**FFmpeg no encontrado**
-Asegurate de tener `ffmpeg` en el `PATH` o la carpeta `backend/ffmpeg/` con el binario dentro.
-
-**Frontend no carga en el navegador**
-Verificá que el backend esté corriendo en `http://127.0.0.1:8000` y que el puerto no esté ocupado por otro proceso.
-
-**Límite de uso de Groq (rate limit)**
-MIKIT rota automáticamente entre las keys configuradas (con un enfriamiento de 30 s tras un 429). Cargá varias keys en Configuración para transcribir audios largos sin interrupciones.
-
-**Audios largos**
-El backend los fracciona en partes de hasta 10 minutos y transcribe cada parte por separado, cortando en silencios para no partir palabras.
-
----
-
-## Documentación
-
-- [`MANUAL.md`](MANUAL.md) — manual de usuario completo, pantalla por pantalla.
-- [`Especificaciones.md`](Especificaciones.md) — especificaciones técnicas y funcionales del sistema.
-- [`PLAN_PROTOTIPO_LOCAL.md`](PLAN_PROTOTIPO_LOCAL.md) — plan de conversión a prototipo local (navegador + `.bat`).
+Si algo no funciona, la tabla deoubleshooting está en
+[`MANUAL.md`](MANUAL.md#9-solución-de-problemas) — es el único lugar donde se
+mantiene, para que no se desincronice del resto de la documentación.

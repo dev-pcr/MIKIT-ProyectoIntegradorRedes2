@@ -63,13 +63,53 @@ MIKIT es una aplicación de productividad personal para grabación de audio y tr
 
 **Captura de audio:** `MediaRecorder` con `audio/webm;codecs=opus` a 256 kbps (fallback si el browser no lo soporta). Constraints de fidelidad: `echoCancellation/noiseSuppression/autoGainControl` desactivados, `channelCount: 2`, `sampleRate: 48000`, `sampleSize: 16`. El blob se guarda como **WebM/Opus** en IndexedDB.
 
-### 2. Selector de Micrófono
+### 2. Configuración adicional (modal)
 
-- Debajo de la consola de grabación.
+- **No es un panel inline**: se abre como ventana emergente (`AnimatePresence` + `motion.div`) desde un botón **tuerca (`Wrench`) en la esquina superior derecha de la consola de grabación**. Es una tarea puntual (calibrar una vez) y así la consola queda limpia.
+- La tuerca va **dentro** del `glass-card` de la consola, no al lado: el card es `overflow-hidden`, así que un botón posicionado fuera de sus límites quedaría recortado. Como es `absolute` + `z-10`, no participa del flex layout, no corre el contenido, y queda por encima del glow desenfocado.
+- La tuerca muestra un **punto ámbar** mientras la configuración esté incompleta, y queda `disabled` si `status !== 'inactivo'`.
+- **Cierre por `Escape`** (listener en `window` agregado/retirado según el estado del modal) y por click en el overlay (`e.target === e.currentTarget`, para no cerrar al clickear dentro). Un modal de calibración sin salida por teclado deja al usuario atrapado.
+- Role `dialog` + `aria-modal` + `aria-label`; botón de cierre con `aria-label`.
+- `max-w-2xl` (el layout es de dos columnas, `max-w-md` no alcanza) y `max-h-[90vh] overflow-y-auto` para que no se corte en pantallas bajas.
+- Contenido: dos columnas con `grid md:grid-cols-2` dentro de un panel de vidrio. **Micrófono** a la izquierda, **puerta de ruido** a la derecha. Ambas columnas con `min-w-0` porque el `select` tiene ancho intrínseco y hace blowout del grid.
+- El panel interno y la caja del modal usan `.glass` y **no** `.glass-card`: esa tiene `-translate-y-1` en `:hover` y el contenedor se levantaría al arrastrar el umbral, sacando el slider de debajo del cursor. Un contenedor con controles de formulario no puede animarse al hover. (El modal de guardado sí usa `glass-card`: no tiene drag, ahí no molesta.)
+- Sin `backdrop-blur` en el panel: el fondo de la app es un gradiente suave sin detalle, así que el desenfoque no aportaría nada visible. La separación la dan contraste, borde y sombra. (En el overlay del modal sí, porque ahí sí hay contenido detrás.)
+- El aviso de bloqueo bajo el botón de grabar es **un botón** que abre el modal: el mensaje que falta está en la tuerca, así que abrirla es la acción obvia.
+- Reusa el patrón de modal que ya usa la app (`fixed inset-0 z-[100] ... bg-black/60 backdrop-blur-sm`).
 - Enumera dispositivos `audioinput` con `enumerateDevices()` (pide permiso con un `getUserMedia` mudo para obtener labels reales).
 - Detecta conexión/desconexión de dispositivos en caliente (evento `devicechange` — utilidad para el mic Bluetooth de solapa).
 - Al grabar aplica `deviceId: { exact: selectedDeviceId }`.
 - Estado solo en memoria (no persiste entre sesiones).
+
+#### 2.1 Puerta de ruido — monitor de nivel + umbral
+
+Control en dos partes, dentro del mismo desplegable.
+
+**Monitor de nivel** — `src/hooks/useLevelMonitor.js`
+- `getUserMedia` propio + `AudioContext` + `AnalyserNode` (`fftSize` 2048, `smoothingTimeConstant` 0.6).
+- El `AnalyserNode` **no** se conecta al `destination`: el monitor es exclusivamente visual, nunca reproduce audio (requisito explícito del usuario).
+- Con `echoCancellation`, `noiseSuppression` y `autoGainControl` en `false`. Si el navegador normaliza o cancela ruido, la lectura del nivel miente y la calibración no sirve.
+- RMS sobre time-domain data → `20*log10(rms)`, acotado a −60…0 dBFS. El piso de −60 dB representa "silencio" y evita que el ruido de fondo empuje la barra contra el extremo izquierdo.
+- Emisión a ~20 Hz con histéresis de 0.5 dB. A 60 Hz el `setState` re-renderiza el `Recorder` entero, que además tiene `MediaRecorder` y timer corriendo.
+- Se monta solo con `status === 'inactivo'`: grabar ya abre su propio stream, y mantener dos capturas vivas del mismo micrófono enciende el indicador del sistema sin necesidad.
+- Compara contra un ref del último valor emitido, no contra el `state`: dentro del rAF el `state` es un closure viejo y daría una diferencia siempre grande (re-render loop).
+
+**Umbral** — `src/components/NoiseGateControl.jsx`
+- Escala −60…0 dBFS; `dbToPct` / `pctToDb` sobre el span completo, con snapping a 1 dB.
+- Click en la pista = salto directo; drag desde el mango = ajuste fino. El puntero se captura en `pointerdown` para que el drag no se pierda al salirse del elemento.
+- Accesible como `role="slider"` con teclado: flechas 1 dB, `Shift`+flechas 6 dB, `Home`/`End` a los extremos.
+- La señal **por debajo** del umbral se dibuja atenuada y la de **arriba** iluminada: la barra muestra qué se está descartando, no solo dónde está el corte.
+
+**Persistencia** — `src/utils/preferences.js`
+- Clave `noise_gate_settings`, con `thresholdDb` y `enabled`.
+- El umbral arranca en `null` = **sin calibrar**. Ese `null` es lo que mantiene bloqueada la grabación: no tiene sentido dar por buena una puerta que el usuario nunca fijó.
+- Un umbral de `0` dB es un valor legítimo y distinguible de `null` (JSON los separa).
+
+**Regla de bloqueo** — `src/pages/Recorder.jsx`
+- `canRecord = micSeleccionado && umbralConfigurado`.
+- El botón queda `disabled` y debajo se listan los pendientes concretos ("seleccioná un micrófono y calibrá la puerta de ruido"), para que el bloqueo se lea como una regla y no como un bug.
+
+**Pendiente — el umbral no filtra el audio grabado.** Hoy la puerta define el corte y muestra en vivo qué señal pasaría, pero el `MediaRecorder` sigue capturando todo. Filtrar en vivo requiere un `AudioWorklet` entre el `MediaStream` y el `MediaRecorder`, con ataque/release para no cortar sílabas. La alternativa barata es el filtro `agate` de ffmpeg al exportar, pero entonces el nivel en vivo de la barra miente respecto de lo que finalmente se escucha. La arquitectura actual deja el umbral listo para ser leído por el processor.
 
 ### 3. Guardado de Grabación
 
@@ -85,6 +125,12 @@ Al detener, se presenta un **modal de guardado** con:
 
 - Banner "Grabación Guardada" con acciones `Reproducir` / `Transcribir`.
 - Reproductor activo: Play/Pausa, skip ±10s, barra de progreso con scrubbing, velocidad cíclica (1x → 1.5x → 2x → 0.5x), tiempo transcurrido / duración total.
+
+### 5. Secciones plegables
+
+`src/components/CollapsibleSection.jsx` — encabezado clickeable con `aria-expanded`, animación de altura con framer-motion y soporte para título, descripción, ícono y `defaultOpen`.
+
+- **Consumidor único hoy: `src/pages/Settings.jsx`.** Nació para compartirlo con la Grabadora, pero esa pantalla terminó usando un modal en vez de un panel inline, así que el componente ya no se comparte. Sigue siendo un acierto: la definición estaba *dentro* de `Settings.jsx`, sin exportar, y ahora es un módulo reutilizable por cualquier pantalla que necesite un plegable.
 
 ---
 
@@ -267,7 +313,7 @@ Cuatro secciones colapsables (acordeón animado, la primera abierta por defecto)
 ## Restricciones Técnicas
 
 - **Monolito**: frontend React + Vite servido por backend FastAPI (Python) en el mismo repo; pydub/ffmpeg para audio.
-- `ffmpeg`/`ffprobe` se inyectan al PATH desde la carpeta `backend/ffmpeg/` si existe.
+- `ffmpeg`/`ffprobe` se inyectan al PATH desde la carpeta `ffmpeg/` en la **raíz del proyecto** si existe (`main.py` la resuelve como `os.path.join(BASE_DIR, "ffmpeg")`; esa carpeta está en `.gitignore` porque es un drop-in local).
 - Compatibilidad: últimas 2 versiones de Chrome, Firefox, Safari y Edge.
 - APIs de audio: `MediaRecorder API` + `enumerateDevices`.
 - Transcripción: Groq (`whisper-large-v3`, `verbose_json` con timestamps).
