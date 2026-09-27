@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Play, Pause, FastForward, RotateCcw, RotateCw, FileText, Edit2, Check, X, Copy, Save, Trash2, AlertCircle, FolderDown, Loader2, ChevronRight, ChevronLeft, MicVocal } from 'lucide-react'
+import { Play, Pause, FastForward, RotateCcw, RotateCw, FileText, Edit2, Check, X, Copy, Save, Trash2, AlertCircle, FolderDown, Loader2, ChevronRight, ChevronLeft, ChevronUp, Mic, MicVocal } from 'lucide-react'
 import { getAllRecordings, deleteRecording, updateRecording, getAllKaraokes, deleteKaraoke, updateKaraoke } from '../utils/storage'
 import { getTranscriptions, deleteTranscription, updateTranscription } from '../utils/preferences'
 import { saveAudioToDesktop, saveToDesktop } from '../utils/api'
@@ -110,6 +110,28 @@ export default function History() {
     if (audioRef.current) audioRef.current.pause()
     setActiveKey(null)
     setIsPlaying(false)
+  }
+
+  // Colapso unificado para los tres tipos. Cierra SIEMPRE el player, no solo
+  // cuando la tarjeta activa es la que se contrae: hay un solo <audio> y su
+  // panel depende de la key expandida, asi que si el activo es otra tarjeta su
+  // audio queda huerfano sonando sin ningun control visible.
+  const collapseCard = () => {
+    setExpandedKey(null)
+    closePlayer()
+  }
+
+  // Apertura/cierre de una tarjeta concreta. Vive aca para que la usen los dos
+  // puntos de entrada: el icono de tipo y el click en cualquier parte de la
+  // tarjeta, sin duplicar la logica de abrir el player.
+  const toggleCard = (item, isKaraoke, canPlay) => {
+    if (expandedKey === itemKey(item)) {
+      collapseCard()
+      return
+    }
+    setExpandedKey(itemKey(item))
+    if (canPlay) openPlayer(item)
+    if (isKaraoke) setKaraokeIndex(0)
   }
 
   const togglePlay = () => {
@@ -355,9 +377,6 @@ export default function History() {
             <button onClick={changePlaybackRate} className="px-3 py-1.5 glass rounded-lg text-xs font-bold text-white hover:bg-white/10 transition-colors flex items-center gap-1">
               <FastForward size={14} /> {playbackRate}x
             </button>
-            <button onClick={closePlayer} className="p-2 text-zinc-500 hover:text-white transition-colors" title="Cerrar">
-              <X size={18} />
-            </button>
           </div>
         </div>
       </motion.div>
@@ -392,9 +411,6 @@ export default function History() {
               </button>
               <button onClick={() => handleCopy(item.text)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Copiar todo el texto">
                 Copiar todo
-              </button>
-              <button onClick={() => setExpandedKey(null)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Volver a la lista">
-                Historial
               </button>
               <button onClick={() => handleExportKaraokeMd(item)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-fuchsia-500/15 text-fuchsia-300 hover:bg-fuchsia-500/25 transition-colors" title="Exportar como .md">
                 Exportar MD
@@ -470,12 +486,11 @@ export default function History() {
   // Click en el fondo -> colapsa lo expandido. Se ignoran los clicks que caen
   // dentro de una tarjeta o de una capa flotante (modal/toast), para no cerrar
   // la expansion mientras el usuario opera un control.
-  // El audio se cierra con closePlayer(): si solo pusieramos expandedKey en null
+  // El audio se cierra con collapseCard(): si solo pusieramos expandedKey en null
   // el player se ocultaria pero el audio seguiria sonando sin controles visibles.
   const collapseOnBackground = (e) => {
     if (e.target.closest('[data-history-card], [data-history-overlay]')) return
-    setExpandedKey(null)
-    if (activeKey !== null) closePlayer()
+    collapseCard()
   }
 
   return (
@@ -596,38 +611,34 @@ export default function History() {
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: Math.min(index * 0.05, 0.5) }}
-                className={`glass-card p-4 group hover:border-brand-500/30 overflow-hidden transition-all duration-300 ${isExpanded ? 'border-fuchsia-500/30' : ''}`}
+                onClick={(e) => {
+                  // Toda la tarjeta abre y cierra, pero los controles internos
+                  // (copiar, guardar, eliminar, velocidad, timeline) tienen su
+                  // propio onClick: sin esta guarda un click en "Eliminar"
+                  // ademas contraeria la tarjeta.
+                  if (e.target.closest('button, a, input, textarea, select, [role="button"]')) return
+                  // Si hay texto seleccionado el click fue para seleccionar, no
+                  // para cerrar. Passa seguido en el panel de transcripcion.
+                  if (typeof window !== 'undefined' && window.getSelection?.()?.toString()) return
+                  toggleCard(item, isKaraoke, canPlay)
+                }}
+                className={`glass-card p-4 group hover:border-brand-500/30 overflow-hidden transition-all duration-300 cursor-pointer ${isExpanded ? 'border-fuchsia-500/30' : ''}`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4 flex-1 min-w-0">
-                    {canPlay ? (
-                      <button
-                        onClick={() => {
-                          if (isKaraoke) {
-                            setExpandedKey(isExpanded ? null : key)
-                            if (!isExpanded) setKaraokeIndex(0)
-                          }
-                          if (activeKey === key) togglePlay()
-                          else openPlayer(item)
-                        }}
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 ${activeKey === key ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/20' : 'bg-brand-500/10 text-brand-500 hover:bg-brand-500/20'}`}
-                        title={isKaraoke ? (isExpanded ? 'Colapsar' : 'Abrir karaoke') : 'Reproducir'}
-                      >
-                        {activeKey === key && isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => setExpandedKey(isExpanded ? null : key)}
-                        className={`relative w-10 h-10 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 ${isExpanded ? 'bg-white/20 text-white' : 'bg-white/10 text-zinc-400 hover:bg-white/20'}`}
-                        title={isExpanded ? 'Colapsar' : 'Ver transcripción'}
-                      >
-                        {/* Icono de tipo, mismo peso visual que el Play de audio/karaoke.
-                            El chevron queda en la esquina para no perder la señal de
-                            "esto se expande", que antes ocupaba todo el boton. */}
-                        <FileText size={20} />
-                        <ChevronRight size={12} className={`absolute bottom-0.5 right-0.5 transition-transform duration-300 ${isExpanded ? 'rotate-90' : ''}`} />
-                      </button>
-                    )}
+                    {/* Un solo patron para los tres tipos: este boton ABRE y CIERRA, y
+                        nada mas. Antes hacia de todo (play/pause + expandir) y para
+                        audio ni siquiera cerraba. La reproduccion vive en los controles
+                        del panel expandido, que es donde tiene sentido verlos.
+                        Sin chevron: la señal de expandido es el fondo activo del boton
+                        y, al cerrarse, el control de la derecha. */}
+                    <button
+                      onClick={() => toggleCard(item, isKaraoke, canPlay)}
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 ${isExpanded ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/20' : 'bg-brand-500/10 text-brand-500 hover:bg-brand-500/20'}`}
+                      title={isExpanded ? 'Contraer' : isAudio ? 'Abrir grabación' : isKaraoke ? 'Abrir karaoke' : 'Ver transcripción'}
+                    >
+                      {isAudio ? <Mic size={20} /> : isKaraoke ? <MicVocal size={20} /> : <FileText size={20} />}
+                    </button>
 
                     <div className="flex-1 min-w-0">
                       {editingKey === key ? (
@@ -649,7 +660,7 @@ export default function History() {
                             <span className="truncate">{item.name}</span>
                             <button
                               onClick={() => { setEditingKey(key); setEditName(item.name); }}
-                              className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-white transition-all flex-shrink-0"
+                              className={`p-1 text-zinc-500 hover:text-white transition-all flex-shrink-0 ${isExpanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                               title="Renombrar"
                             >
                               <Edit2 size={12} />
@@ -668,7 +679,10 @@ export default function History() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-4">
+                  {/* Contraida: las acciones aparecen al pasar el mouse, para no
+                      cargar la lista. Expandida: quedan siempre visibles, porque si
+                      el usuario aleja el mouse todavia tiene que poder cerrarla. */}
+                  <div className={`flex items-center gap-2 transition-opacity flex-shrink-0 ml-4 ${isExpanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                     {isAudio ? (
                       <>
                         <button
@@ -735,6 +749,18 @@ export default function History() {
                     >
                       <Trash2 size={18} />
                     </button>
+                    {/* Ultima de la derecha: contractualmente el cierre del panel.
+                        Se mantiene separado de "Eliminar" a proposito, son cosas
+                        opuestas y no deberian quedar contiguas. */}
+                    {isExpanded ? (
+                      <button
+                        onClick={collapseCard}
+                        className="p-2 hover:bg-white/10 rounded-lg text-zinc-500 hover:text-white transition-colors"
+                        title="Contraer"
+                      >
+                        <ChevronUp size={18} />
+                      </button>
+                    ) : null}
                   </div>
                 </div>
 
@@ -744,7 +770,7 @@ export default function History() {
                 </AnimatePresence>
 
                 {/* Inline player para audio en reproducción (el karaoke tiene sus controles en el panel) */}
-                {isAudio ? renderInlinePlayer(item) : null}
+                {isAudio && isExpanded ? renderInlinePlayer(item) : null}
 
                 {/* Expanded transcription text */}
                 <AnimatePresence>
