@@ -135,11 +135,21 @@ if dist_path and os.path.exists(dist_path):
     async def root():
         return FileResponse(os.path.join(dist_path, "index.html"))
 
+    # Roots de las rutas de API que nunca deben caer al fallback de la SPA. El
+    # catch-all de abajo se registra ANTES que los endpoints reales, asi que sin
+    # esta guarda un GET a /transcribe devolveria index.html con HTTP 200.
+    # Se comparan por segmento, asi que la lista lleva los roots EXACTOS
+    # ("save_md", no "save_") y tampoco arrastra a rutas de la SPA.
+    # OJO: mantener en sync con los endpoints declarados abajo.
+    API_ROOTS = ("transcribe", "process_text", "save_md", "save_audio", "assets")
+
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
-        if full_path.startswith("transcribe") or full_path.startswith("save_") or full_path.startswith("assets"):
-            return None
-        
+        # 404 explicito: devolver None serializa a `null` con HTTP 200, lo que
+        # hace que un path de API inexistente parezca sano.
+        if full_path.split("/", 1)[0] in API_ROOTS:
+            raise HTTPException(status_code=404, detail="Not found")
+
         file_path = os.path.join(dist_path, full_path)
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
