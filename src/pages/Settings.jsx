@@ -1,46 +1,12 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Key, Plus, Trash2, ShieldCheck, LayoutTemplate, AlertCircle, Check, Edit2, MicVocal, Braces, MessageSquareText, Eye, X, ChevronDown } from 'lucide-react'
+import { Key, Plus, Trash2, ShieldCheck, LayoutTemplate, AlertCircle, Check, Edit2, MicVocal, Braces, MessageSquareText, Eye, X } from 'lucide-react'
 import { getApiKeys, saveApiKeys, getTextApiKeys, saveTextApiKeys, getTemplates, saveTemplates, getPromptTemplates, savePromptTemplates } from '../utils/preferences'
+import CollapsibleSection from '../components/CollapsibleSection'
 
 const maskKey = (keyString) => {
   if (keyString.length <= 8) return '********';
   return `${keyString.slice(0, 4)}...${keyString.slice(-4)}`;
-}
-
-function CollapsibleSection({ title, description, icon, defaultOpen = false, children }) {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <section className="space-y-4">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between gap-3 text-left group"
-        aria-expanded={open}
-      >
-        <div className="flex items-center gap-3 text-white">
-          {icon}
-          <div>
-            <h3 className="text-xl font-bold group-hover:text-brand-400 transition-colors">{title}</h3>
-            {description ? <p className="text-xs text-zinc-500">{description}</p> : null}
-          </div>
-        </div>
-        <ChevronDown className={`flex-shrink-0 transition-transform duration-300 ${open ? 'rotate-180 text-brand-400' : 'text-zinc-500 group-hover:text-white'}`} />
-      </button>
-      <AnimatePresence initial={false}>
-        {open ? (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.2, 0.65, 0.3, 0.9] }}
-            className="overflow-hidden"
-          >
-            {children}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-    </section>
-  )
 }
 
 function ApiKeysSection({ keys, newAlias, setNewAlias, newValue, setNewValue, onAdd, onActivate, onDelete, emptyText, placeholder = 'API Key (gsk_...)' }) {
