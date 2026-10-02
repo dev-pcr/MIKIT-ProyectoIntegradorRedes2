@@ -17,6 +17,23 @@ const formatTime = (seconds) => {
 // Clave única por tipo (grabaciones: id numérico; transcripciones: id string)
 const itemKey = (item) => `${item.type}:${item.id}`
 
+const parseDurationToSeconds = (duration) => {
+  if (typeof duration === 'number' && !isNaN(duration) && isFinite(duration) && duration > 0) {
+    return duration
+  }
+  if (typeof duration === 'string') {
+    const parts = duration.split(':').map(Number)
+    if (parts.length === 3 && parts.every(p => !isNaN(p))) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    } else if (parts.length === 2 && parts.every(p => !isNaN(p))) {
+      return parts[0] * 60 + parts[1]
+    } else if (parts.length === 1 && !isNaN(parts[0])) {
+      return parts[0]
+    }
+  }
+  return 0
+}
+
 const karaokeToMarkdown = (karaoke) => {
   const dateStr = new Date(karaoke.createdAt).toLocaleString('es-AR')
   const fragmentList = karaoke.segments
@@ -57,6 +74,18 @@ export default function History() {
     loadTranscriptions()
     loadKaraokes()
   }, [])
+
+  const getItemDuration = (item) => {
+    const audioDur = audioRef.current?.duration
+    if (typeof audioDur === 'number' && isFinite(audioDur) && !isNaN(audioDur) && audioDur > 0) {
+      return audioDur
+    }
+    if (item?.duration) {
+      const parsed = parseDurationToSeconds(item.duration)
+      if (parsed > 0) return parsed
+    }
+    return 0
+  }
 
   const loadRecordings = async () => {
     const data = await getAllRecordings()
@@ -166,20 +195,32 @@ export default function History() {
   }
 
   const handleScrub = (e) => {
-    if (audioRef.current) {
-      const rect = e.currentTarget.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const percent = x / rect.width
-      audioRef.current.currentTime = percent * audioRef.current.duration
-      setPlayerTime(audioRef.current.currentTime)
+    e.stopPropagation()
+    if (!audioRef.current) return
+    const totalDuration = getItemDuration(activeItem)
+    if (!totalDuration || !isFinite(totalDuration) || totalDuration <= 0) return
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    if (rect.width === 0) return
+    const x = e.clientX - rect.left
+    const percent = Math.max(0, Math.min(1, x / rect.width))
+    const targetTime = Math.min(Math.max(percent * totalDuration, 0), totalDuration)
+
+    if (isFinite(targetTime) && !isNaN(targetTime)) {
+      audioRef.current.currentTime = targetTime
+      setPlayerTime(targetTime)
     }
   }
 
   const skipTime = (amount) => {
-    if (audioRef.current) {
-      const newTime = audioRef.current.currentTime + amount
-      audioRef.current.currentTime = Math.min(Math.max(newTime, 0), audioRef.current.duration)
-      setPlayerTime(audioRef.current.currentTime)
+    if (!audioRef.current) return
+    const totalDuration = getItemDuration(activeItem)
+    const curTime = audioRef.current.currentTime || playerTime || 0
+    const maxTime = totalDuration > 0 ? totalDuration : (isFinite(audioRef.current.duration) ? audioRef.current.duration : Infinity)
+    const newTime = Math.min(Math.max(curTime + amount, 0), maxTime)
+    if (isFinite(newTime) && !isNaN(newTime)) {
+      audioRef.current.currentTime = newTime
+      setPlayerTime(newTime)
     }
   }
 
@@ -340,10 +381,14 @@ export default function History() {
   const renderInlinePlayer = (item) => {
     const isActive = activeKey === itemKey(item)
     if (!isActive) return null
+    const totalDuration = getItemDuration(item)
+    const progressPct = totalDuration > 0 ? Math.min(100, Math.max(0, (playerTime / totalDuration) * 100)) : 0
+
     return (
       <motion.div
         initial={{ opacity: 0, height: 0 }}
         animate={{ opacity: 1, height: 'auto' }}
+        onClick={(e) => e.stopPropagation()}
         className="border-t border-white/5 bg-black/20 mt-4"
       >
         <div className="p-4 flex flex-col gap-3">
@@ -360,13 +405,20 @@ export default function History() {
 
             <div className="flex-1 flex flex-col gap-2">
               <div
-                className="h-2 bg-white/10 rounded-full overflow-hidden cursor-pointer relative"
+                role="slider"
+                tabIndex={0}
+                aria-label="Línea de tiempo del audio"
+                aria-valuemin={0}
+                aria-valuenow={Math.round(playerTime)}
+                className="h-4 flex items-center cursor-pointer relative py-1"
                 onClick={handleScrub}
               >
-                <motion.div
-                  className="absolute top-0 left-0 h-full bg-brand-500"
-                  style={{ width: audioRef.current?.duration ? `${(playerTime / audioRef.current.duration) * 100}%` : '0%' }}
-                />
+                <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden relative pointer-events-none">
+                  <motion.div
+                    className="absolute top-0 left-0 h-full bg-brand-500"
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
               </div>
               <div className="flex justify-between text-xs text-zinc-500 font-mono">
                 <span>{formatTime(playerTime)}</span>
@@ -395,6 +447,7 @@ export default function History() {
         initial={{ height: 0, opacity: 0 }}
         animate={{ height: 'auto', opacity: 1 }}
         exit={{ height: 0, opacity: 0 }}
+        onClick={(e) => e.stopPropagation()}
         className="border-t border-white/5 bg-black/20 mt-4"
       >
         <div className="p-6 space-y-5">
@@ -464,13 +517,20 @@ export default function History() {
 
             <div className="w-full flex flex-col gap-2">
               <div
-                className="h-2 bg-white/10 rounded-full overflow-hidden cursor-pointer relative"
+                role="slider"
+                tabIndex={0}
+                aria-label="Línea de tiempo del audio de karaoke"
+                aria-valuemin={0}
+                aria-valuenow={Math.round(playerTime)}
+                className="h-4 flex items-center cursor-pointer relative py-1"
                 onClick={handleScrub}
               >
-                <motion.div
-                  className="absolute top-0 left-0 h-full bg-fuchsia-500"
-                  style={{ width: audioRef.current?.duration ? `${(playerTime / audioRef.current.duration) * 100}%` : '0%' }}
-                />
+                <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden relative pointer-events-none">
+                  <motion.div
+                    className="absolute top-0 left-0 h-full bg-fuchsia-500"
+                    style={{ width: `${getItemDuration(item) > 0 ? Math.min(100, Math.max(0, (playerTime / getItemDuration(item)) * 100)) : 0}%` }}
+                  />
+                </div>
               </div>
               <div className="flex justify-between text-xs text-zinc-500 font-mono">
                 <span>{formatTime(playerTime)}</span>
@@ -616,9 +676,9 @@ export default function History() {
                   // (copiar, guardar, eliminar, velocidad, timeline) tienen su
                   // propio onClick: sin esta guarda un click en "Eliminar"
                   // ademas contraeria la tarjeta.
-                  if (e.target.closest('button, a, input, textarea, select, [role="button"]')) return
+                  if (e.target.closest('button, a, input, textarea, select, [role="button"], [role="slider"], [data-no-collapse]')) return
                   // Si hay texto seleccionado el click fue para seleccionar, no
-                  // para cerrar. Passa seguido en el panel de transcripcion.
+                  // para cerrar. Pasa seguido en el panel de transcripcion.
                   if (typeof window !== 'undefined' && window.getSelection?.()?.toString()) return
                   toggleCard(item, isKaraoke, canPlay)
                 }}
@@ -779,10 +839,11 @@ export default function History() {
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: 'auto', opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
+                      onClick={(e) => e.stopPropagation()}
                       className="border-t border-white/5 bg-black/20 mt-4"
                     >
                       <div className="p-6">
-                        <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{item.text}</p>
+                        <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">{item.text}</p>
                       </div>
                     </motion.div>
                   ) : null}

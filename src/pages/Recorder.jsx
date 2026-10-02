@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Mic, Square, Play, Pause, Trash2, RotateCcw, RotateCw, FileText, Check, X, Volume2, FastForward, ChevronDown, Wrench, CircleAlert } from 'lucide-react'
 import { saveRecording } from '../utils/storage'
 import { getTemplates, getNoiseGateSettings, saveNoiseGateSettings } from '../utils/preferences'
+import { createProcessedStream } from '../utils/audioProcessor'
 import NoiseGateControl from '../components/NoiseGateControl'
 import { useLevelMonitor } from '../hooks/useLevelMonitor'
 import { useNavigate } from 'react-router-dom'
@@ -73,6 +74,7 @@ export default function Recorder() {
   const audioRef = useRef(null)
 
   const mediaRecorder = useRef(null)
+  const recordingSessionRef = useRef(null)
   const audioChunks = useRef([])
   const timerRef = useRef(null)
   const navigate = useNavigate()
@@ -95,7 +97,11 @@ export default function Recorder() {
 
     // Actualiza la lista si se conecta/desconecta un dispositivo (ej. mic Bluetooth)
     navigator.mediaDevices.addEventListener?.('devicechange', loadDevices)
-    return () => navigator.mediaDevices.removeEventListener?.('devicechange', loadDevices)
+    return () => {
+      navigator.mediaDevices.removeEventListener?.('devicechange', loadDevices)
+      recordingSessionRef.current?.cleanup()
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
   }, [])
 
   // Escape cierra el modal de configuración. Un modal de calibración sin
@@ -151,7 +157,9 @@ export default function Recorder() {
         audioConstraints.deviceId = { exact: selectedDeviceId }
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
+      const rawStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
+      const session = await createProcessedStream(rawStream, gateThresholdDb)
+      recordingSessionRef.current = session
 
       const options = { 
         mimeType: 'audio/webm;codecs=opus', 
@@ -162,7 +170,7 @@ export default function Recorder() {
         delete options.mimeType
       }
 
-      mediaRecorder.current = new MediaRecorder(stream, options)
+      mediaRecorder.current = new MediaRecorder(session.stream, options)
       audioChunks.current = []
 
       mediaRecorder.current.ondataavailable = (event) => {
@@ -196,7 +204,8 @@ export default function Recorder() {
 
   const stopRecording = () => {
     mediaRecorder.current.stop()
-    mediaRecorder.current.stream.getTracks().forEach(track => track.stop())
+    recordingSessionRef.current?.cleanup()
+    recordingSessionRef.current = null
     setStatus('detenido')
     clearInterval(timerRef.current)
   }
@@ -280,25 +289,66 @@ export default function Recorder() {
     if (audioRef.current) audioRef.current.playbackRate = nextRate
   }
 
+const parseDurationToSeconds = (duration) => {
+  if (typeof duration === 'number' && !isNaN(duration) && isFinite(duration) && duration > 0) {
+    return duration
+  }
+  if (typeof duration === 'string') {
+    const parts = duration.split(':').map(Number)
+    if (parts.length === 3 && parts.every(p => !isNaN(p))) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    } else if (parts.length === 2 && parts.every(p => !isNaN(p))) {
+      return parts[0] * 60 + parts[1]
+    } else if (parts.length === 1 && !isNaN(parts[0])) {
+      return parts[0]
+    }
+  }
+  return 0
+}
+
+  const getPlayerDuration = () => {
+    const audioDur = audioRef.current?.duration
+    if (typeof audioDur === 'number' && isFinite(audioDur) && !isNaN(audioDur) && audioDur > 0) {
+      return audioDur
+    }
+    if (activePlayer?.duration) {
+      const parsed = parseDurationToSeconds(activePlayer.duration)
+      if (parsed > 0) return parsed
+    }
+    return 0
+  }
+
   const handleTimeUpdate = () => {
     if (audioRef.current) setPlayerTime(audioRef.current.currentTime)
   }
 
   const handleScrub = (e) => {
-    if (audioRef.current) {
-      const rect = e.currentTarget.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const percent = x / rect.width
-      audioRef.current.currentTime = percent * audioRef.current.duration
-      setPlayerTime(audioRef.current.currentTime)
+    e.stopPropagation()
+    if (!audioRef.current) return
+    const totalDuration = getPlayerDuration()
+    if (!totalDuration || !isFinite(totalDuration) || totalDuration <= 0) return
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    if (rect.width === 0) return
+    const x = e.clientX - rect.left
+    const percent = Math.max(0, Math.min(1, x / rect.width))
+    const targetTime = Math.min(Math.max(percent * totalDuration, 0), totalDuration)
+
+    if (isFinite(targetTime) && !isNaN(targetTime)) {
+      audioRef.current.currentTime = targetTime
+      setPlayerTime(targetTime)
     }
   }
 
   const skipTime = (amount) => {
-    if (audioRef.current) {
-      const newTime = audioRef.current.currentTime + amount
-      audioRef.current.currentTime = Math.min(Math.max(newTime, 0), audioRef.current.duration)
-      setPlayerTime(audioRef.current.currentTime)
+    if (!audioRef.current) return
+    const totalDuration = getPlayerDuration()
+    const curTime = audioRef.current.currentTime || playerTime || 0
+    const maxTime = totalDuration > 0 ? totalDuration : (isFinite(audioRef.current.duration) ? audioRef.current.duration : Infinity)
+    const newTime = Math.min(Math.max(curTime + amount, 0), maxTime)
+    if (isFinite(newTime) && !isNaN(newTime)) {
+      audioRef.current.currentTime = newTime
+      setPlayerTime(newTime)
     }
   }
 
@@ -689,13 +739,20 @@ export default function Recorder() {
               
               <div className="flex-1 flex flex-col gap-2">
                 <div 
-                  className="h-2 bg-white/10 rounded-full overflow-hidden cursor-pointer relative"
+                  role="slider"
+                  tabIndex={0}
+                  aria-label="Línea de tiempo del audio"
+                  aria-valuemin={0}
+                  aria-valuenow={Math.round(playerTime)}
+                  className="h-4 flex items-center cursor-pointer relative py-1"
                   onClick={handleScrub}
                 >
-                  <motion.div 
-                    className="absolute top-0 left-0 h-full bg-brand-500"
-                    style={{ width: audioRef.current?.duration ? `${(playerTime / audioRef.current.duration) * 100}%` : '0%' }}
-                  />
+                  <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden relative pointer-events-none">
+                    <motion.div 
+                      className="absolute top-0 left-0 h-full bg-brand-500"
+                      style={{ width: `${getPlayerDuration() > 0 ? Math.min(100, Math.max(0, (playerTime / getPlayerDuration()) * 100)) : 0}%` }}
+                    />
+                  </div>
                 </div>
                 <div className="flex justify-between text-xs text-zinc-500 font-mono">
                   <span>{formatTime(playerTime)}</span>

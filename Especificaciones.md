@@ -109,7 +109,9 @@ Control en dos partes, dentro del mismo desplegable.
 - `canRecord = micSeleccionado && umbralConfigurado`.
 - El botón queda `disabled` y debajo se listan los pendientes concretos ("seleccioná un micrófono y calibrá la puerta de ruido"), para que el bloqueo se lea como una regla y no como un bug.
 
-**Pendiente — el umbral no filtra el audio grabado.** Hoy la puerta define el corte y muestra en vivo qué señal pasaría, pero el `MediaRecorder` sigue capturando todo. Filtrar en vivo requiere un `AudioWorklet` entre el `MediaStream` y el `MediaRecorder`, con ataque/release para no cortar sílabas. La alternativa barata es el filtro `agate` de ffmpeg al exportar, pero entonces el nivel en vivo de la barra miente respecto de lo que finalmente se escucha. La arquitectura actual deja el umbral listo para ser leído por el processor.
+**Filtrado en vivo** — `src/utils/audioProcessor.js`
+- El flujo de grabación intercala un `AudioWorklet` (con fallback a `ScriptProcessor`) con el umbral calibrado (`thresholdDb`), ataque rápido (10 ms), hold (60 ms) y release suave (120 ms) entre el `MediaStream` del micrófono y el `MediaRecorder`.
+- El audio grabado en WebM/Opus contiene la señal con el ruido de fondo atenuado según el umbral configurado por el usuario.
 
 ### 3. Guardado de Grabación
 
