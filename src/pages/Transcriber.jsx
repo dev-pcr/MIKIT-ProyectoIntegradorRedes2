@@ -3,7 +3,7 @@ import { motion, AnimatePresence, LayoutGroup } from 'framer-motion'
 import { Upload, FileAudio, X, Copy, Download, Save, Loader2, AlertCircle, Trash2, Check, CheckCircle2, Circle, CircleAlert, CircleDotDashed, CircleX, MicVocal, Play, Pause, RotateCcw, RotateCw, ChevronLeft, ChevronRight, FastForward, FileText, ChevronDown } from 'lucide-react'
 import { transcribeAudioStream, saveToDesktop } from '../utils/api'
 import { getApiKeys, addTranscription, getTemplates } from '../utils/preferences'
-import { saveKaraoke } from '../utils/storage'
+import { saveKaraoke, findSegmentIndex } from '../utils/storage'
 import { useLocation } from 'react-router-dom'
 
 const formatTime = (seconds) => {
@@ -284,9 +284,8 @@ export default function Transcriber() {
     if (!audioRef.current) return
     const t = audioRef.current.currentTime
     setPlayerTime(t)
-    // Sincronizar el fragmento actual con la reproducción
-    if (segments.length && t > segments[karaokeIndex].end && karaokeIndex < segments.length - 1) {
-      setKaraokeIndex(karaokeIndex + 1)
+    if (segments.length > 0) {
+      setKaraokeIndex(findSegmentIndex(segments, t))
     }
   }
 
@@ -296,27 +295,46 @@ export default function Transcriber() {
 
   const handlePreviewScrub = (e) => {
     if (!audioRef.current) return
+    if (!audioRef.current.src && file) loadPreviewAudio()
+    const totalDuration = segments.length ? Number(segments[segments.length - 1].end) : (audioRef.current.duration || 0)
+    if (!totalDuration || totalDuration <= 0) return
+
     const rect = e.currentTarget.getBoundingClientRect()
+    if (rect.width === 0) return
     const x = e.clientX - rect.left
-    const percent = x / rect.width
-    audioRef.current.currentTime = percent * audioRef.current.duration
-    setPlayerTime(audioRef.current.currentTime)
+    const percent = Math.max(0, Math.min(1, x / rect.width))
+    const targetTime = Math.min(Math.max(percent * totalDuration, 0), totalDuration)
+
+    audioRef.current.currentTime = targetTime
+    setPlayerTime(targetTime)
+    if (segments.length > 0) {
+      setKaraokeIndex(findSegmentIndex(segments, targetTime))
+    }
   }
 
   const skipPreviewTime = (amount) => {
     if (!audioRef.current) return
-    const newTime = audioRef.current.currentTime + amount
-    audioRef.current.currentTime = Math.min(Math.max(newTime, 0), audioRef.current.duration)
-    setPlayerTime(audioRef.current.currentTime)
+    if (!audioRef.current.src && file) loadPreviewAudio()
+    const curTime = audioRef.current.currentTime || playerTime || 0
+    const totalDuration = segments.length ? Number(segments[segments.length - 1].end) : (audioRef.current.duration || 0)
+    const maxTime = totalDuration > 0 ? totalDuration : (isFinite(audioRef.current.duration) ? audioRef.current.duration : Infinity)
+    const newTime = Math.min(Math.max(curTime + amount, 0), maxTime)
+    audioRef.current.currentTime = newTime
+    setPlayerTime(newTime)
+    if (segments.length > 0) {
+      setKaraokeIndex(findSegmentIndex(segments, newTime))
+    }
   }
 
   const gotoPreviewFragment = (idx) => {
     if (!segments.length) return
     const clamped = Math.min(Math.max(idx, 0), segments.length - 1)
     setKaraokeIndex(clamped)
-    if (audioRef.current && isPlaying) {
-      audioRef.current.currentTime = segments[clamped].start
-      setPlayerTime(audioRef.current.currentTime)
+    const targetTime = Number(segments[clamped].start) || 0
+    setPlayerTime(targetTime)
+    if (audioRef.current) {
+      if (!audioRef.current.src && file) loadPreviewAudio()
+      audioRef.current.currentTime = targetTime
     }
   }
 
@@ -763,17 +781,30 @@ export default function Transcriber() {
 
                     <div className="w-full flex flex-col gap-2">
                       <div
-                        className="h-2 bg-white/10 rounded-full overflow-hidden cursor-pointer relative"
+                        role="slider"
+                        tabIndex={0}
+                        aria-label="Línea de tiempo del audio de karaoke"
+                        aria-valuemin={0}
+                        aria-valuenow={Math.round(playerTime)}
+                        className="h-4 flex items-center cursor-pointer relative py-1"
                         onClick={handlePreviewScrub}
                       >
-                        <motion.div
-                          className="absolute top-0 left-0 h-full bg-fuchsia-500"
-                          style={{ width: audioRef.current?.duration ? `${(playerTime / audioRef.current.duration) * 100}%` : '0%' }}
-                        />
+                        <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden relative pointer-events-none">
+                          <motion.div
+                            className="absolute top-0 left-0 h-full bg-fuchsia-500"
+                            style={{
+                              width: `${
+                                (segments.length ? Number(segments[segments.length - 1].end) : (audioRef.current?.duration || 0)) > 0
+                                  ? Math.min(100, Math.max(0, (playerTime / (segments.length ? Number(segments[segments.length - 1].end) : (audioRef.current?.duration || 1))) * 100))
+                                  : 0
+                              }%`
+                            }}
+                          />
+                        </div>
                       </div>
                       <div className="flex justify-between text-xs text-zinc-500 font-mono">
                         <span>{formatTime(playerTime)}</span>
-                        <span>{formatTime(segments[segments.length - 1].end)}</span>
+                        <span>{formatTime(segments.length ? Number(segments[segments.length - 1].end) : (audioRef.current?.duration || 0))}</span>
                       </div>
                     </div>
                   </div>

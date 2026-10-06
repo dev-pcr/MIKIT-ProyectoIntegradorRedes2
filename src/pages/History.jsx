@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Play, Pause, FastForward, RotateCcw, RotateCw, FileText, Edit2, Check, X, Copy, Save, Trash2, AlertCircle, FolderDown, Loader2, ChevronRight, ChevronLeft, ChevronUp, Mic, MicVocal } from 'lucide-react'
-import { getAllRecordings, deleteRecording, updateRecording, getAllKaraokes, deleteKaraoke, updateKaraoke } from '../utils/storage'
+import { getAllRecordings, deleteRecording, updateRecording, getAllKaraokes, deleteKaraoke, updateKaraoke, findSegmentIndex } from '../utils/storage'
 import { getTranscriptions, deleteTranscription, updateTranscription } from '../utils/preferences'
 import { saveAudioToDesktop, saveToDesktop } from '../utils/api'
 import { useNavigate } from 'react-router-dom'
@@ -84,6 +84,10 @@ export default function History() {
       const parsed = parseDurationToSeconds(item.duration)
       if (parsed > 0) return parsed
     }
+    if (item?.segments?.length) {
+      const last = item.segments[item.segments.length - 1]
+      if (last?.end > 0) return Number(last.end)
+    }
     return 0
   }
 
@@ -119,16 +123,21 @@ export default function History() {
   const activeItem = items.find(i => itemKey(i) === activeKey) || null
 
   // Player Controls (inline dentro de la tarjeta)
-  const openPlayer = (item) => {
+  const openPlayer = (item, startTime = 0) => {
     if (audioRef.current) audioRef.current.pause()
     setActiveKey(itemKey(item))
     setIsPlaying(false)
-    setPlayerTime(0)
-    if (item.type === 'karaoke') setKaraokeIndex(0)
+    setPlayerTime(startTime)
+    if (item.type === 'karaoke' && item.segments?.length) {
+      setKaraokeIndex(findSegmentIndex(item.segments, startTime))
+    }
     setTimeout(() => {
       if (audioRef.current) {
         audioRef.current.src = URL.createObjectURL(item.blob)
         audioRef.current.playbackRate = playbackRate
+        if (startTime > 0) {
+          audioRef.current.currentTime = startTime
+        }
         audioRef.current.play()
         setIsPlaying(true)
       }
@@ -159,15 +168,23 @@ export default function History() {
       return
     }
     setExpandedKey(itemKey(item))
-    if (canPlay) openPlayer(item)
+    if (canPlay) openPlayer(item, 0)
     if (isKaraoke) setKaraokeIndex(0)
   }
 
-  const togglePlay = () => {
+  const togglePlay = (item) => {
     if (!audioRef.current) return
-    if (isPlaying) audioRef.current.pause()
-    else audioRef.current.play()
-    setIsPlaying(!isPlaying)
+    if (item && activeKey !== itemKey(item)) {
+      openPlayer(item, playerTime)
+      return
+    }
+    if (isPlaying) {
+      audioRef.current.pause()
+      setIsPlaying(false)
+    } else {
+      audioRef.current.play()
+      setIsPlaying(true)
+    }
   }
 
   const changePlaybackRate = () => {
@@ -184,13 +201,7 @@ export default function History() {
 
     // Sincronizar fragmento del karaoke con el audio en reproducción
     if (activeItem?.type === 'karaoke' && activeItem.segments?.length && expandedKey === itemKey(activeItem)) {
-      const segs = activeItem.segments
-      const cur = karaokeIndex
-      if (t > segs[cur].end && cur < segs.length - 1) {
-        setKaraokeIndex(cur + 1)
-      } else if (t < segs[cur].start && cur > 0) {
-        setKaraokeIndex(cur - 1)
-      }
+      setKaraokeIndex(findSegmentIndex(activeItem.segments, t))
     }
   }
 
@@ -209,6 +220,9 @@ export default function History() {
     if (isFinite(targetTime) && !isNaN(targetTime)) {
       audioRef.current.currentTime = targetTime
       setPlayerTime(targetTime)
+      if (activeItem?.type === 'karaoke' && activeItem.segments?.length) {
+        setKaraokeIndex(findSegmentIndex(activeItem.segments, targetTime))
+      }
     }
   }
 
@@ -221,6 +235,9 @@ export default function History() {
     if (isFinite(newTime) && !isNaN(newTime)) {
       audioRef.current.currentTime = newTime
       setPlayerTime(newTime)
+      if (activeItem?.type === 'karaoke' && activeItem.segments?.length) {
+        setKaraokeIndex(findSegmentIndex(activeItem.segments, newTime))
+      }
     }
   }
 
@@ -230,10 +247,20 @@ export default function History() {
     if (!segs?.length) return
     const clamped = Math.min(Math.max(idx, 0), segs.length - 1)
     setKaraokeIndex(clamped)
-    // Si este karaoke está reproduciéndose, saltar el audio al inicio del fragmento
-    if (audioRef.current && activeKey === itemKey(karaoke) && !audioRef.current.paused) {
-      audioRef.current.currentTime = segs[clamped].start
-      setPlayerTime(audioRef.current.currentTime)
+    const targetTime = Number(segs[clamped].start) || 0
+    setPlayerTime(targetTime)
+
+    // Si el reproductor no está activo con este karaoke, cargarlo
+    if (activeKey !== itemKey(karaoke)) {
+      setActiveKey(itemKey(karaoke))
+      if (audioRef.current) {
+        audioRef.current.src = URL.createObjectURL(karaoke.blob)
+        audioRef.current.playbackRate = playbackRate
+      }
+    }
+
+    if (audioRef.current) {
+      audioRef.current.currentTime = targetTime
     }
   }
 
@@ -438,8 +465,8 @@ export default function History() {
   const renderKaraokePanel = (item) => {
     const segs = item.segments || []
     if (segs.length === 0) return null
-    const idx = karaokeIndex
-    const frag = segs[idx]
+    const idx = Math.min(Math.max(karaokeIndex, 0), segs.length - 1)
+    const frag = segs[idx] || segs[0]
     const isActive = activeKey === itemKey(item)
 
     return (
@@ -455,15 +482,11 @@ export default function History() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <MicVocal size={18} className="text-fuchsia-400" />
-              <span className="font-bold text-white">Karaoke</span>
-              <span className="text-sm text-zinc-500 font-mono">({idx + 1}/{segs.length})</span>
+              <span className="text-sm text-zinc-400 font-mono">({idx + 1}/{segs.length})</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button onClick={() => handleCopy(frag.text)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Copiar fragmento actual">
+              <button onClick={() => handleCopy(frag?.text || '')} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Copiar fragmento actual">
                 Copiar frag.
-              </button>
-              <button onClick={() => handleCopy(item.text)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors" title="Copiar todo el texto">
-                Copiar todo
               </button>
               <button onClick={() => handleExportKaraokeMd(item)} className="px-3 py-1.5 rounded-full text-xs font-bold bg-fuchsia-500/15 text-fuchsia-300 hover:bg-fuchsia-500/25 transition-colors" title="Exportar como .md">
                 Exportar MD
@@ -483,8 +506,8 @@ export default function History() {
             </button>
 
             <div className="flex-1 rounded-2xl bg-white/5 border border-white/10 p-6 flex flex-col items-center gap-3 text-center">
-              <p className="text-lg text-white font-medium leading-relaxed">{frag.text}</p>
-              <span className="text-sm font-mono text-fuchsia-400">{formatTime(frag.start)} – {formatTime(frag.end)}</span>
+              <p className="text-lg text-white font-medium leading-relaxed">{frag?.text}</p>
+              <span className="text-sm font-mono text-fuchsia-400">{formatTime(frag?.start)} – {formatTime(frag?.end)}</span>
             </div>
 
             <button
@@ -504,7 +527,13 @@ export default function History() {
                 <RotateCcw size={20} />
               </button>
               <button
-                onClick={isActive ? togglePlay : () => openPlayer(item)}
+                onClick={() => {
+                  if (isActive) {
+                    togglePlay(item)
+                  } else {
+                    openPlayer(item, playerTime)
+                  }
+                }}
                 className="w-14 h-14 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform"
                 title={isActive && isPlaying ? 'Pausar' : 'Reproducir'}
               >

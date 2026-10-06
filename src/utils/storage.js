@@ -65,3 +65,36 @@ export async function updateKaraoke(karaoke) {
   const db = await initDB();
   return db.put(KARAOKE_STORE, karaoke);
 }
+
+/**
+ * Encuentra el índice del segmento de karaoke correspondiente a un tiempo en segundos.
+ */
+export function findSegmentIndex(segments, time) {
+  if (!segments || segments.length === 0) return 0;
+  const t = Math.max(0, Number(time) || 0);
+
+  const firstStart = Number(segments[0].start) || 0;
+  if (t <= firstStart) return 0;
+
+  const lastStart = Number(segments[segments.length - 1].start) || 0;
+  if (t >= lastStart) {
+    return segments.length - 1;
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    const curStart = Number(segments[i].start) || 0;
+    const curEnd = Number(segments[i].end) || 0;
+    const nextStart = segments[i + 1] ? (Number(segments[i + 1].start) || 0) : Infinity;
+
+    if (t >= curStart && t <= curEnd) {
+      return i;
+    }
+
+    if (t > curEnd && t < nextStart) {
+      return i;
+    }
+  }
+
+  return 0;
+}
+
