@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "check:imports": "node scripts/check-imports.mjs",
     "smoke": "node scripts/smoke-recorder.mjs",
-    "smoke:all": "node scripts/check-imports.mjs && node scripts/smoke-recorder.mjs Layout && node scripts/smoke-recorder.mjs Recorder && node scripts/smoke-recorder.mjs Settings && node scripts/smoke-recorder.mjs Transcriber && node scripts/smoke-recorder.mjs History && node scripts/smoke-recorder.mjs AIProcessor && node scripts/smoke-recorder.mjs Home"
+    "test:wav": "node scripts/test-wav.mjs",
+    "smoke:all": "node scripts/check-imports.mjs && node scripts/test-wav.mjs && node scripts/smoke-recorder.mjs Layout && node scripts/smoke-recorder.mjs Recorder && node scripts/smoke-recorder.mjs Settings && node scripts/smoke-recorder.mjs Transcriber && node scripts/smoke-recorder.mjs History && node scripts/smoke-recorder.mjs AIProcessor && node scripts/smoke-recorder.mjs Home"
   },
   "dependencies": {
     "react": "^18.2.0",

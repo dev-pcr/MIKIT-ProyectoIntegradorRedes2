@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Mic, Square, Play, Pause, Trash2, RotateCcw, RotateCw, FileText, Check, X, Volume2, FastForward, ChevronDown, Wrench, CircleAlert } from 'lucide-react'
+import { Mic, Square, Play, Pause, Trash2, RotateCcw, RotateCw, FileText, Check, X, Volume2, FastForward, ChevronDown, Wrench, CircleAlert, Bluetooth } from 'lucide-react'
 import { saveRecording } from '../utils/storage'
+import { BleMic, BLE_SAMPLE_RATE, isBleSupported, isUserCancel, describeBleError, chunkRms } from '../utils/bleMic'
+import { pcm16ToWavBlob } from '../utils/wav'
 import { getTemplates, getNoiseGateSettings, saveNoiseGateSettings } from '../utils/preferences'
 import { createProcessedStream } from '../utils/audioProcessor'
 import NoiseGateControl from '../components/NoiseGateControl'
@@ -29,6 +31,16 @@ export default function Recorder() {
   const [audioDevices, setAudioDevices] = useState([])
   const [selectedDeviceId, setSelectedDeviceId] = useState('')
 
+  // Fuente de audio: micrófono del sistema (getUserMedia) o ESP32 por BLE.
+  // Todo el estado BLE se declara ACÁ, antes de `useLevelMonitor` y de los
+  // cálculos de `canRecord`, que lo leen (ver nota de TDZ más abajo).
+  const [source, setSource] = useState('system') // 'system' | 'ble'
+  const [bleStatus, setBleStatus] = useState('desconectado') // desconectado | conectando | conectado
+  const [bleName, setBleName] = useState('')
+  const [bleError, setBleError] = useState(null)
+  const [bleLevel, setBleLevel] = useState(0)
+  const bleSupported = isBleSupported()
+
   // Modal de configuración. Se declara ACÁ, y no con el resto de los UI States
   // de más abajo, porque `useLevelMonitor` de la línea siguiente lo lee: si se
   // declara después, el render tira "Cannot access 'isGateModalOpen' before
@@ -44,7 +56,7 @@ export default function Recorder() {
   // sería dejarlo encendido al pedo (y con el indicador del sistema prendido).
   // Tampoco tiene sentido grabando: el grabador ya abre su propio stream.
   const { levelDb, error: monitorError } = useLevelMonitor({
-    enabled: status === 'inactivo' && isGateModalOpen,
+    enabled: status === 'inactivo' && isGateModalOpen && source === 'system',
     deviceId: selectedDeviceId || undefined,
   })
 
@@ -55,13 +67,18 @@ export default function Recorder() {
 
   // Grabar exige micrófono elegido + puerta calibrada. Sin esto se
   // grabaría con ganancia y umbral arbitrarios.
+  // Con el ESP32 por BLE no hay MediaStream ni puerta de ruido: alcanza con
+  // que esté conectado.
   const micSelected = Boolean(selectedDeviceId)
   const gateCalibrated = typeof gateThresholdDb === 'number'
-  const canRecord = micSelected && gateCalibrated
-  const blockers = [
-    !micSelected && 'seleccioná un micrófono',
-    !gateCalibrated && 'calibrá la puerta de ruido',
-  ].filter(Boolean)
+  const bleReady = bleStatus === 'conectado'
+  const canRecord = source === 'ble' ? bleReady : (micSelected && gateCalibrated)
+  const blockers = source === 'ble'
+    ? [!bleReady && 'conectá el micrófono ESP32'].filter(Boolean)
+    : [
+        !micSelected && 'seleccioná un micrófono',
+        !gateCalibrated && 'calibrá la puerta de ruido',
+      ].filter(Boolean)
 
   // UI States
   const [toasts, setToasts] = useState([])
@@ -78,6 +95,16 @@ export default function Recorder() {
   const audioChunks = useRef([])
   const timerRef = useRef(null)
   const navigate = useNavigate()
+
+  // --- BLE ---
+  const bleRef = useRef(null)          // instancia BleMic
+  const pcmChunks = useRef([])         // paquetes PCM recibidos
+  const pcmBytes = useRef(0)           // suma de bytes recibidos
+  const acceptRef = useRef(false)      // false = descartar paquetes (pausa / sin grabar)
+  const lastLevelAt = useRef(0)        // throttle del medidor de nivel
+  const statusRef = useRef(status)     // para handlers de eventos BLE (closures viejos)
+  const bleDisconnectHandlerRef = useRef(null)
+  statusRef.current = status
 
   useEffect(() => {
     setTemplates(getTemplates())
@@ -100,6 +127,8 @@ export default function Recorder() {
     return () => {
       navigator.mediaDevices.removeEventListener?.('devicechange', loadDevices)
       recordingSessionRef.current?.cleanup()
+      acceptRef.current = false
+      bleRef.current?.disconnect()
       if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [])
@@ -136,7 +165,127 @@ export default function Recorder() {
     }, 3000)
   }
 
+  // ---------- ESP32 por BLE ----------
+
+  // Sólo toca refs y setters (estables): por eso es seguro que el BleMic la
+  // conserve aunque el componente se re-renderice.
+  const handleBleChunk = (bytes) => {
+    if (!acceptRef.current) return
+    pcmChunks.current.push(bytes)
+    pcmBytes.current += bytes.length
+    // Medidor de nivel a ~10 Hz: un setState por paquete re-renderizaría todo.
+    const now = performance.now()
+    if (now - lastLevelAt.current > 100) {
+      lastLevelAt.current = now
+      setBleLevel(Math.min(1, Math.sqrt(chunkRms(bytes)) * 1.4))
+    }
+  }
+
+  // Desconexión inesperada (ESP32 apagado o fuera de alcance). Se lee a
+  // través de un ref actualizado en cada render para no usar estado viejo.
+  const handleBleDisconnect = () => {
+    acceptRef.current = false
+    bleRef.current = null
+    setBleStatus('desconectado')
+    setBleName('')
+    setBleLevel(0)
+    const st = statusRef.current
+    if (st === 'grabando' || st === 'pausado') {
+      clearInterval(timerRef.current)
+      if (pcmBytes.current > 0) {
+        // Se conserva lo grabado hasta ahora, igual que en la referencia.
+        setStatus('detenido')
+        setIsModalOpen(true)
+        addToast('Se perdió la conexión con el ESP32. Podés guardar lo grabado hasta ahora.', 'error')
+      } else {
+        setStatus('inactivo')
+        setTime(0)
+        addToast('Se perdió la conexión con el ESP32 y no llegó audio.', 'error')
+      }
+    } else {
+      addToast('El micrófono ESP32 se desconectó.', 'error')
+    }
+  }
+  bleDisconnectHandlerRef.current = handleBleDisconnect
+
+  // Debe dispararse desde un click: Web Bluetooth exige gesto del usuario.
+  const connectBle = async () => {
+    if (!isBleSupported()) return
+    setBleError(null)
+    setBleStatus('conectando')
+    const mic = new BleMic()
+    bleRef.current = mic
+    try {
+      await mic.connect({
+        onChunk: handleBleChunk,
+        onDisconnect: () => bleDisconnectHandlerRef.current?.(),
+      })
+      setBleName(mic.deviceName)
+      setBleStatus('conectado')
+    } catch (err) {
+      bleRef.current = null
+      setBleStatus('desconectado')
+      // Cerrar el selector sin elegir no es un error que haya que mostrar.
+      if (!isUserCancel(err)) setBleError(describeBleError(err))
+    }
+  }
+
+  const disconnectBle = () => {
+    bleRef.current?.disconnect()
+    bleRef.current = null
+    setBleStatus('desconectado')
+    setBleName('')
+    setBleLevel(0)
+  }
+
+  const startBleRecording = async () => {
+    pcmChunks.current = []
+    pcmBytes.current = 0
+    // Se habilita ANTES de pedir el inicio: el primer paquete puede llegar
+    // apenas el ESP32 recibe el comando.
+    acceptRef.current = true
+    try {
+      await bleRef.current.start()
+    } catch (err) {
+      acceptRef.current = false
+      addToast(`No se pudo iniciar la grabación: ${err?.message || err}`, 'error')
+      return
+    }
+    setStatus('grabando')
+    timerRef.current = setInterval(() => setTime(t => t + 1), 1000)
+  }
+
+  // Detiene la transmisión y abre el modal de guardado (equivale al `onstop`
+  // del MediaRecorder).
+  const stopBleRecording = async () => {
+    clearInterval(timerRef.current)
+    setStatus('detenido')
+    await bleRef.current?.stop()
+    acceptRef.current = false
+    setBleLevel(0)
+    if (pcmBytes.current > 0) {
+      setIsModalOpen(true)
+    } else {
+      setStatus('inactivo')
+      setTime(0)
+      addToast('No llegó audio desde el ESP32.', 'error')
+    }
+  }
+
+  // Descarta lo grabado sin abrir el modal de guardado.
+  const discardBleRecording = async () => {
+    clearInterval(timerRef.current)
+    acceptRef.current = false
+    await bleRef.current?.stop()
+    pcmChunks.current = []
+    pcmBytes.current = 0
+    setBleLevel(0)
+    setStatus('inactivo')
+    setTime(0)
+  }
+
   const startRecording = async () => {
+    if (source === 'ble') return startBleRecording()
     try {
       const audioConstraints = {
         echoCancellation: false,
@@ -191,18 +340,22 @@ export default function Recorder() {
   }
 
   const pauseRecording = () => {
-    mediaRecorder.current.pause()
+    // BLE: el ESP32 sigue transmitiendo, la app sólo descarta los paquetes.
+    if (source === 'ble') acceptRef.current = false
+    else mediaRecorder.current.pause()
     setStatus('pausado')
     clearInterval(timerRef.current)
   }
 
   const resumeRecording = () => {
-    mediaRecorder.current.resume()
+    if (source === 'ble') acceptRef.current = true
+    else mediaRecorder.current.resume()
     setStatus('grabando')
     timerRef.current = setInterval(() => setTime(t => t + 1), 1000)
   }
 
   const stopRecording = () => {
+    if (source === 'ble') { stopBleRecording(); return }
     mediaRecorder.current.stop()
     recordingSessionRef.current?.cleanup()
     recordingSessionRef.current = null
@@ -218,12 +371,24 @@ export default function Recorder() {
   }
 
   const handleSave = async () => {
-    const mimeType = mediaRecorder.current?.mimeType || 'audio/webm'
-    const blob = new Blob(audioChunks.current, { type: mimeType })
+    let blob, duration
+    if (source === 'ble') {
+      // Duración real por bytes recibidos: si se perdieron paquetes, el
+      // cronómetro de la pantalla mentiría.
+      const wav = pcm16ToWavBlob(pcmChunks.current, pcmBytes.current, BLE_SAMPLE_RATE)
+      blob = wav.blob
+      duration = formatTime(Math.round(wav.durationSec))
+      pcmChunks.current = []
+      pcmBytes.current = 0
+    } else {
+      const mimeType = mediaRecorder.current?.mimeType || 'audio/webm'
+      blob = new Blob(audioChunks.current, { type: mimeType })
+      duration = formatTime(time)
+    }
     const finalName = getPreviewName()
     const metadata = {
       name: finalName,
-      duration: formatTime(time),
+      duration,
     }
     const savedId = await saveRecording(blob, metadata)
     
@@ -232,7 +397,7 @@ export default function Recorder() {
       id: savedId,
       blob,
       name: finalName,
-      duration: formatTime(time),
+      duration,
       createdAt: new Date().toISOString()
     })
 
@@ -432,7 +597,7 @@ const parseDurationToSeconds = (duration) => {
 
               <div className="flex gap-3">
                 <button 
-                  onClick={() => { setIsModalOpen(false); setStatus('inactivo'); setTime(0); }}
+                  onClick={() => { pcmChunks.current = []; pcmBytes.current = 0; setIsModalOpen(false); setStatus('inactivo'); setTime(0); }}
                   className="btn-secondary flex-1"
                 >
                   Descartar
@@ -500,6 +665,29 @@ const parseDurationToSeconds = (duration) => {
           ))}
         </div>
 
+        {/* ESP32 por BLE: nivel real del micrófono y calidad de la recepción.
+            El visualizador de arriba es decorativo; esto es lo que permite
+            notar si el audio llega (o llega entrecortado). */}
+        {source === 'ble' && (status === 'grabando' || status === 'pausado') && (() => {
+          const expected = time * BLE_SAMPLE_RATE * 2
+          const pct = time >= 3 && expected > 0 ? Math.min(100, (pcmBytes.current / expected) * 100) : null
+          return (
+            <div className="w-full max-w-md relative space-y-2">
+              <div className="h-2 bg-white/10 rounded-full overflow-hidden" role="meter" aria-label="Nivel de sonido del ESP32" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(bleLevel * 100)}>
+                <div className="h-full bg-brand-500 transition-[width] duration-100" style={{ width: `${status === 'pausado' ? 0 : bleLevel * 100}%` }} />
+              </div>
+              <div className="flex justify-between text-xs text-zinc-500">
+                <span className="flex items-center gap-1.5"><Bluetooth size={12} className="text-brand-400" /> {bleName || 'ESP32'}</span>
+                {pct !== null && (
+                  <span className={pct < 90 ? 'text-amber-400' : ''}>
+                    Audio recibido: {pct.toFixed(0)} %{pct < 90 ? ' — se están perdiendo paquetes, acercá el micrófono' : ''}
+                  </span>
+                )}
+              </div>
+            </div>
+          )
+        })()}
+
         {/* Controls */}
         <div className="flex items-center gap-6 relative">
           <AnimatePresence>
@@ -508,7 +696,10 @@ const parseDurationToSeconds = (duration) => {
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.8 }}
-                onClick={() => { stopRecording(); setStatus('inactivo'); setTime(0); }}
+                onClick={() => {
+                  if (source === 'ble') { discardBleRecording(); return }
+                  stopRecording(); setStatus('inactivo'); setTime(0);
+                }}
                 className="w-14 h-14 rounded-full glass flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 transition-all"
               >
                 <RotateCcw size={24} />
@@ -606,9 +797,80 @@ const parseDurationToSeconds = (duration) => {
               </div>
 
               <div className="glass rounded-xl p-5 sm:p-6">
+          {/* Fuente de audio: micrófono del sistema o ESP32 por BLE. El ESP32
+              no aparece en la lista del sistema porque no usa el perfil de
+              audio Bluetooth: se conecta por GATT con Web Bluetooth. */}
+          <div className="mb-6">
+            <span className="text-xs uppercase tracking-wider text-zinc-500 block mb-3">Fuente de audio</span>
+            <div role="radiogroup" aria-label="Fuente de audio" className="inline-flex p-1 rounded-xl bg-white/5 border border-white/10 gap-1">
+              {[
+                { id: 'system', label: 'Micrófono del sistema', icon: Mic },
+                { id: 'ble', label: 'ESP32 (BLE)', icon: Bluetooth },
+              ].map(opt => {
+                const Icon = opt.icon
+                const active = source === opt.id
+                return (
+                  <button
+                    key={opt.id}
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setSource(opt.id)}
+                    disabled={status !== 'inactivo'}
+                    className={`px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                      active ? 'bg-brand-600 text-white' : 'text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    <Icon size={14} /> {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
           <div className="grid gap-6 md:grid-cols-2 md:gap-8">
+            {/* Conexión del ESP32 por BLE */}
+            {source === 'ble' && (
+              <div className="min-w-0">
+                <span className="text-xs uppercase tracking-wider text-zinc-500 flex items-center gap-2 mb-3">
+                  <Bluetooth size={12} className={bleStatus === 'conectado' ? 'text-green-400' : 'text-zinc-500'} />
+                  Micrófono ESP32
+                </span>
+                {!bleSupported ? (
+                  <p className="text-xs text-amber-400">
+                    Este navegador no soporta Web Bluetooth. Usá Chrome o Edge, y abrí la app desde localhost o HTTPS.
+                  </p>
+                ) : bleStatus === 'conectado' ? (
+                  <div className="flex items-center justify-between gap-3 p-3 rounded-xl border border-green-500/60">
+                    <span className="text-sm text-green-400 truncate">Conectado: {bleName}</span>
+                    <button
+                      onClick={disconnectBle}
+                      disabled={status !== 'inactivo'}
+                      className="btn-secondary px-3 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Desconectar
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={connectBle}
+                    disabled={bleStatus === 'conectando'}
+                    className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    <Bluetooth size={16} />
+                    {bleStatus === 'conectando' ? 'Conectando...' : 'Conectar ESP32'}
+                  </button>
+                )}
+                {bleError && <p className="mt-3 text-xs text-red-400">{bleError}</p>}
+                {bleSupported && !bleError && bleStatus !== 'conectado' && (
+                  <p className="mt-3 text-xs text-zinc-500">
+                    Encendé el micrófono y elegilo en la ventana del navegador.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Selector de micrófono: el dispositivo al que se accede
                 (ej. mic Bluetooth de solapa) */}
+            {source === 'system' && (
             <div className="min-w-0">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <span className="text-xs uppercase tracking-wider text-zinc-500 flex items-center gap-2">
@@ -653,15 +915,22 @@ const parseDurationToSeconds = (duration) => {
                     : 'Elegí con cuál grabar. Podés cambiarlo sólo con la grabadora parada.'}
               </p>
             </div>
+            )}
 
             {/* Puerta de ruido */}
             <div className="min-w-0">
-              <NoiseGateControl
-                levelDb={levelDb}
-                thresholdDb={gateThresholdDb}
-                onThresholdChange={handleThresholdChange}
-                error={monitorError}
-              />
+              {source === 'system' ? (
+                <NoiseGateControl
+                  levelDb={levelDb}
+                  thresholdDb={gateThresholdDb}
+                  onThresholdChange={handleThresholdChange}
+                  error={monitorError}
+                />
+              ) : (
+                <p className="text-xs text-zinc-500">
+                  La puerta de ruido no se aplica al micrófono ESP32: el audio se graba tal como llega (PCM 16 bit, mono, {BLE_SAMPLE_RATE / 1000} kHz).
+                </p>
+              )}
             </div>
           </div>
           </div>

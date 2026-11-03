@@ -106,6 +106,24 @@ El botón de grabación permanece bloqueado hasta que completes las dos cosas:
 
 Bajo el botón aparece qué falta. Si no entendés por qué no graba, es una de esas dos.
 
+#### Grabar con el micrófono ESP32 (Bluetooth BLE)
+
+El micrófono ESP32 **no aparece en el selector de micrófonos**: no usa el audio Bluetooth común sino Bluetooth de bajo consumo (BLE), así que se conecta aparte.
+
+1. Encendé el micrófono ESP32 y acercalo a la computadora.
+2. Abrí la **tuerca** y, en **Fuente de audio**, elegí **ESP32 (BLE)**.
+3. Apretá **Conectar ESP32** y elegí el dispositivo en la ventana que abre el navegador. Cuando diga **Conectado**, cerrá la ventana.
+4. Grabá como siempre (grabar, pausar, parar, guardar). La grabación se guarda como un archivo **WAV** y se puede reproducir y transcribir igual que las demás.
+
+Qué cambia respecto del micrófono del sistema:
+
+- **Sólo funciona en Chrome o Edge**, y abriendo la app desde `localhost` o HTTPS. En Firefox o Safari la opción aparece deshabilitada.
+- **No hay puerta de ruido:** el audio se graba tal como llega del micrófono, así que no hay que calibrar nada.
+- **Pausar** descarta el audio mientras dura la pausa; el micrófono sigue transmitiendo, pero esa parte no se guarda.
+- Mientras grabás se muestra el **nivel de sonido** y el porcentaje de **audio recibido**. Si baja del 90 % se están perdiendo datos por distancia o interferencia: acercá el micrófono.
+- Si el micrófono se apaga o se aleja en medio de la grabación, MIKIT te ofrece **guardar lo grabado hasta ese momento**.
+- La conexión no se recuerda: al recargar la página hay que volver a conectar.
+
 ### El reproductor
 
 Al guardar, aparece un aviso **Grabación Guardada** con botones para **Reproducir** o **Transcribir** la grabación.
@@ -307,6 +325,10 @@ Todo lo demás vive en el navegador y **no sale de tu PC**:
 | "Se requiere una API Key de texto (OpenRouter)" | Falta la clave de OpenRouter | Andá a **Configuración → Claves API para procesado de texto**. Son claves separadas de las de Groq. |
 | "No se pudo acceder al micrófono" | El navegador no tiene permiso | Permití el acceso al micrófono cuando el navegador lo pida (o en la configuración del sitio). |
 | Al transcribir dice "esperando límite" | Tu clave gratuita alcanzó el límite de Groq | Esperá a que se libere, o agregá más claves de audio en Configuración para rotar. |
+| El micrófono ESP32 no aparece en el selector de micrófonos | Es normal: se conecta por BLE, no como micrófono del sistema | En la tuerca elegí **Fuente de audio → ESP32 (BLE)** y apretá **Conectar ESP32**. |
+| La opción ESP32 (BLE) está deshabilitada o dice que no hay Web Bluetooth | Navegador no compatible, o la app se abrió por HTTP desde otra IP | Usá Chrome o Edge y abrí la app desde `localhost` (o HTTPS). |
+| La ventana de Bluetooth no lista el ESP32 | Está apagado, lejos, o conectado a otro dispositivo (ej. el celular) | Encendelo, acercalo y desconectalo de otros equipos; después volvé a apretar **Conectar ESP32**. |
+| La grabación del ESP32 queda entrecortada o suena acelerada/lenta | Pérdida de paquetes por distancia, o frecuencia distinta de 16 kHz en el firmware | Acercá el micrófono y mirá el porcentaje de **audio recibido**. Si suena acelerado o lento, el firmware no está enviando a 16 kHz. |
 | La exportación falla | El backend no está corriendo | Verificá el indicador del menú lateral. |
 | El backend avisa que no encuentra `ffmpeg` | Falta FFmpeg | Instalá FFmpeg y agregalo al `PATH` del sistema, **o** poné una carpeta `ffmpeg/` en la **raíz** del proyecto. |
 | El frontend no carga en el navegador | El puerto 8000 está ocupado por otra app | `iniciar.bat` te avisa si detecta el puerto ocupado. Cerrá la otra app y volvé a lanzar. |
